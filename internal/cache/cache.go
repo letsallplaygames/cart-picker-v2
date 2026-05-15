@@ -49,55 +49,46 @@ func New(dbPath string) (*Cache, error) {
 }
 
 func (c *Cache) Get(endpoint string, params any, ttlHours int) (any, bool) {
-	if c == nil || c.db == nil {
+	value, storedAt, ok, err := c.GetWithTimestamp(endpoint, params)
+	if err != nil || !ok {
 		return nil, false
+	}
+
+	if ttlHours > 0 {
+		expiresAt := storedAt.Add(time.Duration(ttlHours) * time.Hour)
+		if time.Now().After(expiresAt) {
+			cacheKey, keyErr := makeCacheKey(endpoint, params)
+			if keyErr == nil {
+				c.mu.Lock()
+				_ = c.deleteLocked(cacheKey)
+				c.mu.Unlock()
+			}
+			return nil, false
+		}
+	}
+
+	return value, true
+}
+
+func (c *Cache) GetWithTimestamp(endpoint string, params any) (any, time.Time, bool, error) {
+	if c == nil || c.db == nil {
+		return nil, time.Time{}, false, nil
 	}
 
 	cacheKey, err := makeCacheKey(endpoint, params)
 	if err != nil {
-		return nil, false
+		return nil, time.Time{}, false, err
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var raw []byte
-	if err := c.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(bucketName))
-		if bucket == nil {
-			return nil
-		}
-
-		value := bucket.Get([]byte(cacheKey))
-		if value == nil {
-			return nil
-		}
-
-		raw = append([]byte(nil), value...)
-		return nil
-	}); err != nil || raw == nil {
-		return nil, false
+	value, timestamp, ok, err := c.getDecodedLocked(cacheKey)
+	if err != nil || !ok {
+		return nil, time.Time{}, ok, err
 	}
 
-	timestamp, payload, err := decodeEntry(raw)
-	if err != nil {
-		return nil, false
-	}
-
-	if ttlHours > 0 {
-		expiresAt := time.Unix(timestamp, 0).Add(time.Duration(ttlHours) * time.Hour)
-		if time.Now().After(expiresAt) {
-			_ = c.deleteLocked(cacheKey)
-			return nil, false
-		}
-	}
-
-	var value any
-	if err := json.Unmarshal(payload, &value); err != nil {
-		return nil, false
-	}
-
-	return value, true
+	return value, time.Unix(timestamp, 0), true, nil
 }
 
 func (c *Cache) Put(endpoint string, params any, data any) error {
@@ -201,6 +192,41 @@ func (c *Cache) Close() error {
 	err := c.db.Close()
 	c.db = nil
 	return err
+}
+
+func (c *Cache) getDecodedLocked(cacheKey string) (any, int64, bool, error) {
+	var raw []byte
+	if err := c.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketName))
+		if bucket == nil {
+			return nil
+		}
+
+		value := bucket.Get([]byte(cacheKey))
+		if value == nil {
+			return nil
+		}
+
+		raw = append([]byte(nil), value...)
+		return nil
+	}); err != nil {
+		return nil, 0, false, err
+	}
+	if raw == nil {
+		return nil, 0, false, nil
+	}
+
+	timestamp, payload, err := decodeEntry(raw)
+	if err != nil {
+		return nil, 0, false, err
+	}
+
+	var value any
+	if err := json.Unmarshal(payload, &value); err != nil {
+		return nil, 0, false, err
+	}
+
+	return value, timestamp, true, nil
 }
 
 func (c *Cache) deleteLocked(cacheKey string) error {

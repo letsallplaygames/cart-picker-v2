@@ -11,6 +11,7 @@ import (
 
 	"pickcart/internal/cache"
 	"pickcart/internal/config"
+	"pickcart/internal/hardware"
 	"pickcart/internal/led"
 	"pickcart/internal/odoo"
 	"pickcart/internal/picker"
@@ -49,6 +50,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	hardwareResult := hardware.Check()
+	if hardwareResult.Passed {
+		slog.Info("hardware check passed", "system", hardwareResult.System, "arch", hardwareResult.Arch, "gpio", hardwareResult.GPIODevice, "library", hardwareResult.WS281xLibraryPath)
+	} else {
+		slog.Warn("hardware check failed; running in simulation mode", "system", hardwareResult.System, "arch", hardwareResult.Arch)
+		for _, message := range hardwareResult.Messages {
+			slog.Warn(message)
+		}
+	}
+
 	if strings.TrimSpace(cfg.OdooAPIKey) == "" || strings.TrimSpace(cfg.OdooBaseURL) == "" {
 		slog.Error("missing required Odoo configuration", "required", []string{"ODOO_API_KEY", "ODOO_BASE_URL"})
 		os.Exit(1)
@@ -85,14 +96,6 @@ func main() {
 	pick := picker.New(provider)
 	ledController := led.New(cfg.CartNumber, profile.Name)
 	defer ledController.Cleanup()
-
-	go func() {
-		slog.Info("background LED mapping load not implemented yet; continuing without blocking startup")
-	}()
-
-	go func() {
-		slog.Info("background product dimension load not implemented yet; continuing without blocking startup")
-	}()
 
 	application := ui.NewApp(cfg, profile, pick, ledController)
 	slog.Info("starting pickcart", "cart", cfg.CartNumber, "profile", profile.Name)

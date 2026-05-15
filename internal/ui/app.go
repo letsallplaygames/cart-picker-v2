@@ -32,7 +32,6 @@ type App struct {
 	tabs            *container.AppTabs
 	shipmentListTab *ShipmentListTab
 	shelfLayoutTab  *ShelfLayoutTab
-	shelfListTab    *ShelfListTab
 	pickListTab     *PickListTab
 	boxesTab        *ShelfLayoutTab
 	findOrderTab    *FindOrderTab
@@ -42,6 +41,7 @@ type App struct {
 	selectionEpoch  int64
 	batchLoading    bool
 	statusLabel     *widget.Label
+	currentTabName  string
 
 	productDims map[string]dimensions.Dimensions
 }
@@ -64,7 +64,9 @@ func NewApp(cfg *config.AppConfig, profile domain.CartProfile, p *picker.Picker,
 	}
 
 	a.tabs = a.buildTabs()
+	a.currentTabName = "Shipments"
 	a.window.SetContent(container.NewBorder(nil, a.statusLabel, nil, nil, a.tabs))
+	a.window.Canvas().SetOnTypedKey(a.onTypedKey)
 	a.window.Resize(fyne.NewSize(1400, 900))
 
 	return a
@@ -98,7 +100,6 @@ func (a *App) buildTabs() *container.AppTabs {
 	a.shipmentListTab = NewShipmentListTab(a.picker, a.onSelectionChanged)
 	a.shelfLayoutTab = NewShelfLayoutTab(a.profile, a.led, false)
 	a.pickListTab = NewPickListTab()
-	a.shelfListTab = NewShelfListTab()
 	a.boxesTab = NewShelfLayoutTab(a.profile, a.led, true)
 	a.findOrderTab = NewFindOrderTab(a.profile, a.led)
 
@@ -106,7 +107,6 @@ func (a *App) buildTabs() *container.AppTabs {
 		container.NewTabItem("Shipments", a.shipmentListTab.Object()),
 		container.NewTabItem("Pick Cart", a.shelfLayoutTab.Object()),
 		container.NewTabItem("Pick List", a.pickListTab.Object()),
-		container.NewTabItem("Next Pick", a.shelfListTab.Object()),
 		container.NewTabItem("Boxes", a.boxesTab.Object()),
 		container.NewTabItem("Find Order", a.findOrderTab.Object()),
 	)
@@ -148,7 +148,6 @@ func (a *App) onSelectionChanged() {
 
 	if len(selectedShipments) == 0 {
 		a.pickListTab.UpdateItems(nil)
-		a.shelfListTab.UpdateItems(nil)
 		a.shelfLayoutTab.UpdatePickItems(nil)
 		a.boxesTab.UpdatePickItems(nil)
 		a.statusLabel.SetText("No shipments selected")
@@ -198,7 +197,6 @@ func (a *App) onBulkResultsLoaded(epoch int64, results map[string]odoo.BulkResul
 	entries, details := a.buildFindOrderState(selectedShipments, cells)
 
 	a.pickListTab.UpdateItems(pickItems)
-	a.shelfListTab.UpdateItems(pickItems)
 	a.shelfLayoutTab.UpdateShipments(cells)
 	a.shelfLayoutTab.UpdatePickItems(pickItems)
 	a.boxesTab.UpdateShipments(cells)
@@ -251,7 +249,7 @@ func (a *App) aggregatePickList() []domain.PickItem {
 				if existing.Length == 0 {
 					existing.Length = item.Length
 				}
-				if existing.QtyAvailable == 0 {
+				if shouldAdoptQtyAvailable(existing.QtyAvailable, item.QtyAvailable) {
 					existing.QtyAvailable = item.QtyAvailable
 				}
 				continue
@@ -293,7 +291,7 @@ func (a *App) aggregatePickList() []domain.PickItem {
 				if existing.Length == 0 {
 					existing.Length = item.Length
 				}
-				if existing.QtyAvailable == 0 {
+				if shouldAdoptQtyAvailable(existing.QtyAvailable, item.QtyAvailable) {
 					existing.QtyAvailable = item.QtyAvailable
 				}
 				existing.Shipments = append(existing.Shipments, pickShipment)
@@ -366,12 +364,23 @@ func (a *App) locationSortKey(location string) (group int, letter string, mainNu
 		subNum, _ = strconv.Atoi(parts[1])
 	}
 
-	switch letter {
-	case "B", "D", "F", "H", "J":
+	if rowUsesDescendingRoute(letter) {
 		mainNum = -mainNum
 	}
 
 	return 0, letter, mainNum, subNum
+}
+
+func rowUsesDescendingRoute(letter string) bool {
+	letter = strings.TrimSpace(strings.ToUpper(letter))
+	if len(letter) != 1 {
+		return false
+	}
+	row := int(letter[0] - 'A')
+	if row < 0 || row > 25 {
+		return false
+	}
+	return row%2 == 1
 }
 
 func (a *App) onTabChanged(tab *container.TabItem) {
@@ -379,11 +388,55 @@ func (a *App) onTabChanged(tab *container.TabItem) {
 		return
 	}
 
+	a.currentTabName = tab.Text
+
 	switch tab.Text {
 	case "Find Order":
 		a.statusLabel.SetText("Find Order ready")
 	case "Boxes":
 		a.statusLabel.SetText("Boxes view ready")
+	}
+}
+
+func (a *App) onTypedKey(ev *fyne.KeyEvent) {
+	if a == nil || ev == nil {
+		return
+	}
+
+	switch a.currentTabName {
+	case "Pick Cart":
+		if a.shelfLayoutTab == nil {
+			return
+		}
+		switch ev.Name {
+		case fyne.KeyLeft:
+			a.shelfLayoutTab.ShowPrevious()
+		case fyne.KeyRight:
+			a.shelfLayoutTab.ShowNext()
+		}
+	case "Boxes":
+		if a.boxesTab == nil {
+			return
+		}
+		switch ev.Name {
+		case fyne.KeyLeft:
+			a.boxesTab.ShowPreviousBox()
+		case fyne.KeyRight:
+			a.boxesTab.ShowNextBox()
+		}
+	case "Find Order":
+		if a.findOrderTab == nil {
+			return
+		}
+		if a.window != nil && a.window.Canvas().Focused() == a.findOrderTab.searchEntry {
+			return
+		}
+		switch ev.Name {
+		case fyne.KeyLeft:
+			a.findOrderTab.ShowPrevious()
+		case fyne.KeyRight:
+			a.findOrderTab.ShowNext()
+		}
 	}
 }
 
@@ -459,4 +512,11 @@ func (a *App) buildFindOrderState(shipments []*domain.Shipment, cells []ShelfCel
 	}
 
 	return entries, details
+}
+
+func shouldAdoptQtyAvailable(current float64, candidate float64) bool {
+	if candidate < 0 {
+		return false
+	}
+	return current < 0
 }

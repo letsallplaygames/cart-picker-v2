@@ -9,7 +9,6 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,13 +19,13 @@ import (
 )
 
 const (
-	maxRetries             = 5
-	backoffBase            = 1 * time.Second
-	backoffJitter          = 0.25
-	lenexaPickingTypeID    = 446
-	apiCacheTTLHours       = 24
-	inventoryCacheTTL      = 4 * time.Hour
-	inventoryCacheFilePath = "sku_location_cache.json"
+	maxRetries          = 5
+	backoffBase         = 1 * time.Second
+	backoffJitter       = 0.25
+	lenexaPickingTypeID = 446
+	apiCacheTTLHours    = 24
+	inventoryCacheTTL   = 4 * time.Hour
+	inventoryCacheKey   = "odoo.inventory.sku_locations"
 )
 
 type Config struct {
@@ -45,6 +44,13 @@ type BulkResult struct {
 type Client struct {
 	cfg  Config
 	http *http.Client
+}
+
+type productFieldSelection struct {
+	qtyAvailableField string
+	lengthField       string
+	widthField        string
+	heightField       string
 }
 
 type HTTPError struct {
@@ -186,7 +192,7 @@ func (c *Client) FormatOdooLocation(completeName string) string {
 }
 
 func (c *Client) GetInventory() (map[string]string, error) {
-	if cached, ok, err := loadInventoryCache(inventoryCacheFilePath, inventoryCacheTTL); err == nil && ok {
+	if cached, ok, err := c.loadInventoryCache(inventoryCacheTTL); err == nil && ok {
 		return cached, nil
 	}
 
@@ -203,7 +209,7 @@ func (c *Client) GetInventory() (map[string]string, error) {
 		false,
 	)
 	if err != nil {
-		if stale, staleErr := loadInventoryCacheStale(inventoryCacheFilePath); staleErr == nil && len(stale) > 0 {
+		if stale, staleErr := c.loadInventoryCacheStale(); staleErr == nil && len(stale) > 0 {
 			slog.Warn("using stale inventory cache after Odoo inventory fetch failed", "error", err)
 			return stale, nil
 		}
@@ -228,7 +234,7 @@ func (c *Client) GetInventory() (map[string]string, error) {
 
 		locationRows, err := c.Read("stock.location", ids, []string{"id", "complete_name"}, false)
 		if err != nil {
-			if stale, staleErr := loadInventoryCacheStale(inventoryCacheFilePath); staleErr == nil && len(stale) > 0 {
+			if stale, staleErr := c.loadInventoryCacheStale(); staleErr == nil && len(stale) > 0 {
 				slog.Warn("using stale inventory cache after Odoo location lookup failed", "error", err)
 				return stale, nil
 			}
@@ -254,10 +260,11 @@ func (c *Client) GetInventory() (map[string]string, error) {
 
 		locationID, locationLabel := c.ParseMany2One(row["location_id"])
 		completeName := firstNonEmpty(locationNames[locationID], locationLabel)
-		inventory[sku] = c.FormatOdooLocation(completeName)
+		candidate := c.FormatOdooLocation(completeName)
+		inventory[sku] = preferredLocation(inventory[sku], candidate)
 	}
 
-	if err := saveInventoryCache(inventoryCacheFilePath, inventory); err != nil {
+	if err := c.saveInventoryCache(inventory); err != nil {
 		slog.Warn("failed to save inventory cache", "error", err)
 	}
 
@@ -342,7 +349,7 @@ func (c *Client) GetBatchShipmentItemsBulk(shipmentIDs []string, forceRefresh bo
 			[]any{"picking_id", "in", intIDs},
 			[]any{"state", "!=", "cancel"},
 		},
-		[]string{"id", "picking_id", "product_id", "product_uom_qty", "quantity", "state", "description_picking", "display_name", "weight"},
+		[]string{"id", "picking_id", "product_id", "location_id", "product_uom_qty", "quantity", "state", "description_picking", "display_name", "weight"},
 		0,
 		0,
 		"id asc",
@@ -367,8 +374,17 @@ func (c *Client) GetBatchShipmentItemsBulk(shipmentIDs []string, forceRefresh bo
 	sort.Ints(productIDs)
 
 	productMap := make(map[int]map[string]any, len(productIDs))
+	fieldSelection := productFieldSelection{}
 	if len(productIDs) > 0 {
-		products, err := c.Read("product.product", productIDs, []string{"id", "default_code", "name", "weight", "volume"}, forceRefresh)
+		selection, err := c.detectProductFieldSelection(forceRefresh)
+		if err != nil {
+			slog.Warn("failed to detect optional product fields", "error", err)
+		} else {
+			fieldSelection = selection
+		}
+
+		productFields := appendProductReadFields([]string{"id", "default_code", "name", "weight", "volume"}, fieldSelection)
+		products, err := c.Read("product.product", productIDs, productFields, forceRefresh)
 		if err != nil {
 			return nil, err
 		}
@@ -391,7 +407,7 @@ func (c *Client) GetBatchShipmentItemsBulk(shipmentIDs []string, forceRefresh bo
 	}
 
 	for shipmentID, shipmentMoves := range movesByShipment {
-		results[shipmentID] = c.buildItemsFromMoves(shipmentMoves, productMap, skuLocations)
+		results[shipmentID] = c.buildItemsFromMoves(shipmentMoves, productMap, skuLocations, fieldSelection)
 	}
 
 	return results, nil
@@ -501,7 +517,7 @@ func (c *Client) postJSON2(model, method string, payload map[string]any, forceRe
 	return nil, fmt.Errorf("odoo request failed after retries")
 }
 
-func (c *Client) buildItemsFromMoves(moves []map[string]any, productMap map[int]map[string]any, skuLocations map[string]string) BulkResult {
+func (c *Client) buildItemsFromMoves(moves []map[string]any, productMap map[int]map[string]any, skuLocations map[string]string, fieldSelection productFieldSelection) BulkResult {
 	result := BulkResult{Items: make([]domain.Item, 0, len(moves))}
 
 	for _, move := range moves {
@@ -512,6 +528,8 @@ func (c *Client) buildItemsFromMoves(moves []map[string]any, productMap map[int]
 			stringFromAny(product["default_code"]),
 			c.ParseSKUFromLabel(productLabel),
 		)
+		_, moveLocationLabel := c.ParseMany2One(move["location_id"])
+		itemLocation := preferredLocation(c.FormatOdooLocation(moveLocationLabel), skuLocations[sku])
 		name := firstNonEmpty(
 			stringFromAny(product["name"]),
 			stringFromAny(move["description_picking"]),
@@ -538,18 +556,155 @@ func (c *Client) buildItemsFromMoves(moves []map[string]any, productMap map[int]
 			}
 		}
 
+		qtyAvailable := -1.0
+		if strings.TrimSpace(fieldSelection.qtyAvailableField) != "" {
+			qtyAvailable = floatFromSelectedField(product, fieldSelection.qtyAvailableField)
+		}
+
 		result.TotalWeightOz += lineWeightOz
 		result.Items = append(result.Items, domain.Item{
-			SKU:         sku,
-			Name:        name,
-			Quantity:    quantity,
-			SKULocation: skuLocations[sku],
-			Weight:      unitWeightOz,
-			Volume:      floatFromAny(product["volume"]),
+			SKU:          sku,
+			Name:         name,
+			Quantity:     quantity,
+			SKULocation:  itemLocation,
+			Weight:       unitWeightOz,
+			Volume:       floatFromAny(product["volume"]),
+			Height:       floatFromSelectedField(product, fieldSelection.heightField),
+			Width:        floatFromSelectedField(product, fieldSelection.widthField),
+			Length:       floatFromSelectedField(product, fieldSelection.lengthField),
+			QtyAvailable: qtyAvailable,
 		})
 	}
 
 	return result
+}
+
+func (c *Client) detectProductFieldSelection(forceRefresh bool) (productFieldSelection, error) {
+	payload := map[string]any{
+		"attributes": []string{"string", "type"},
+	}
+
+	result, err := c.postJSON2("product.product", "fields_get", payload, forceRefresh)
+	if err != nil {
+		return productFieldSelection{}, err
+	}
+
+	fields, ok := result.(map[string]any)
+	if !ok {
+		return productFieldSelection{}, fmt.Errorf("unexpected product.product.fields_get payload type %T", result)
+	}
+
+	selection := productFieldSelection{}
+	used := map[string]struct{}{}
+	selection.qtyAvailableField = selectNumericField(fields, []string{"free_qty", "qty_available", "virtual_available"}, nil, used)
+	if selection.qtyAvailableField != "" {
+		used[selection.qtyAvailableField] = struct{}{}
+	}
+	selection.lengthField = selectNumericField(fields, []string{"length", "product_length", "x_studio_length"}, []string{"length"}, used)
+	if selection.lengthField != "" {
+		used[selection.lengthField] = struct{}{}
+	}
+	selection.widthField = selectNumericField(fields, []string{"width", "product_width", "x_studio_width"}, []string{"width"}, used)
+	if selection.widthField != "" {
+		used[selection.widthField] = struct{}{}
+	}
+	selection.heightField = selectNumericField(fields, []string{"height", "product_height", "x_studio_height"}, []string{"height"}, used)
+
+	return selection, nil
+}
+
+func appendProductReadFields(base []string, selection productFieldSelection) []string {
+	fields := append([]string(nil), base...)
+	for _, field := range []string{selection.qtyAvailableField, selection.lengthField, selection.widthField, selection.heightField} {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		alreadyIncluded := false
+		for _, existing := range fields {
+			if existing == field {
+				alreadyIncluded = true
+				break
+			}
+		}
+		if !alreadyIncluded {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func selectNumericField(fields map[string]any, preferredNames []string, labelTokens []string, exclude map[string]struct{}) string {
+	for _, preferred := range preferredNames {
+		preferred = strings.TrimSpace(preferred)
+		if preferred == "" {
+			continue
+		}
+		if _, skip := exclude[preferred]; skip {
+			continue
+		}
+		meta, ok := fields[preferred].(map[string]any)
+		if ok && isNumericFieldMeta(meta) {
+			return preferred
+		}
+	}
+
+	type candidate struct {
+		name  string
+		score int
+	}
+
+	best := candidate{}
+	for name, rawMeta := range fields {
+		if _, skip := exclude[name]; skip {
+			continue
+		}
+		meta, ok := rawMeta.(map[string]any)
+		if !ok || !isNumericFieldMeta(meta) {
+			continue
+		}
+
+		nameLower := strings.ToLower(strings.TrimSpace(name))
+		labelLower := strings.ToLower(strings.TrimSpace(stringFromAny(meta["string"])))
+		score := 0
+		for _, token := range labelTokens {
+			token = strings.ToLower(strings.TrimSpace(token))
+			if token == "" {
+				continue
+			}
+			if labelLower == token {
+				score = max(score, 4)
+			}
+			if strings.Contains(nameLower, token) {
+				score = max(score, 3)
+			}
+			if strings.Contains(labelLower, token) {
+				score = max(score, 2)
+			}
+		}
+		if score > best.score {
+			best = candidate{name: name, score: score}
+		}
+	}
+
+	return best.name
+}
+
+func isNumericFieldMeta(meta map[string]any) bool {
+	switch strings.TrimSpace(strings.ToLower(stringFromAny(meta["type"]))) {
+	case "float", "integer", "monetary":
+		return true
+	default:
+		return false
+	}
+}
+
+func floatFromSelectedField(values map[string]any, fieldName string) float64 {
+	fieldName = strings.TrimSpace(fieldName)
+	if fieldName == "" {
+		return 0
+	}
+	return floatFromAny(values[fieldName])
 }
 
 func extractPayload(data any) any {
@@ -594,6 +749,70 @@ func parseStringIDs(ids []string) ([]int, error) {
 		parsed = append(parsed, parsedID)
 	}
 	return parsed, nil
+}
+
+func preferredLocation(current string, candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	current = strings.TrimSpace(current)
+	if candidate == "" {
+		return current
+	}
+	if current == "" {
+		return candidate
+	}
+
+	candidateScore := locationQualityScore(candidate)
+	currentScore := locationQualityScore(current)
+	if candidateScore > currentScore {
+		return candidate
+	}
+	return current
+}
+
+func locationQualityScore(location string) int {
+	location = strings.TrimSpace(strings.ToUpper(location))
+	if location == "" {
+		return 0
+	}
+	if looksLikeShelfLocation(location) {
+		return 3
+	}
+	if strings.Contains(location, "CON/STOCK") || strings.Contains(location, "/STOCK") {
+		return 1
+	}
+	if strings.Contains(location, "/") {
+		return 1
+	}
+	return 2
+}
+
+func looksLikeShelfLocation(location string) bool {
+	location = strings.TrimSpace(strings.ToUpper(location))
+	if location == "" {
+		return false
+	}
+
+	parts := strings.SplitN(location, ".", 2)
+	base := parts[0]
+	if len(base) < 2 || base[0] < 'A' || base[0] > 'Z' {
+		return false
+	}
+	for i := 1; i < len(base); i++ {
+		if base[i] < '0' || base[i] > '9' {
+			return false
+		}
+	}
+	if len(parts) == 2 {
+		if parts[1] == "" {
+			return false
+		}
+		for i := 0; i < len(parts[1]); i++ {
+			if parts[1][i] < '0' || parts[1][i] > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func firstNonEmpty(values ...string) string {
@@ -741,45 +960,62 @@ func asHTTPError(err error, target **HTTPError) bool {
 	return ok
 }
 
-func loadInventoryCache(path string, ttl time.Duration) (map[string]string, bool, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	if time.Since(info.ModTime()) > ttl {
+func (c *Client) loadInventoryCache(ttl time.Duration) (map[string]string, bool, error) {
+	if c == nil || !c.cfg.UseCache || c.cfg.Cache == nil {
 		return nil, false, nil
 	}
 
-	locs, err := loadInventoryCacheStale(path)
+	cached, storedAt, ok, err := c.cfg.Cache.GetWithTimestamp(inventoryCacheKey, nil)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	if time.Since(storedAt) > ttl {
+		return nil, false, nil
+	}
+
+	locs, err := stringMapFromAny(cached)
 	if err != nil {
 		return nil, false, err
 	}
 	return locs, true, nil
 }
 
-func loadInventoryCacheStale(path string) (map[string]string, error) {
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+func (c *Client) loadInventoryCacheStale() (map[string]string, error) {
+	if c == nil || !c.cfg.UseCache || c.cfg.Cache == nil {
+		return nil, nil
 	}
 
-	var locs map[string]string
-	if err := json.Unmarshal(payload, &locs); err != nil {
+	cached, _, ok, err := c.cfg.Cache.GetWithTimestamp(inventoryCacheKey, nil)
+	if err != nil || !ok {
 		return nil, err
 	}
-	if locs == nil {
-		locs = map[string]string{}
-	}
-	return locs, nil
+	return stringMapFromAny(cached)
 }
 
-func saveInventoryCache(path string, locs map[string]string) error {
-	payload, err := json.Marshal(locs)
-	if err != nil {
-		return err
+func (c *Client) saveInventoryCache(locs map[string]string) error {
+	if c == nil || !c.cfg.UseCache || c.cfg.Cache == nil {
+		return nil
 	}
-	return os.WriteFile(path, payload, 0o644)
+	return c.cfg.Cache.Put(inventoryCacheKey, nil, locs)
+}
+
+func stringMapFromAny(value any) (map[string]string, error) {
+	switch v := value.(type) {
+	case nil:
+		return map[string]string{}, nil
+	case map[string]string:
+		copy := make(map[string]string, len(v))
+		for key, entry := range v {
+			copy[key] = entry
+		}
+		return copy, nil
+	case map[string]any:
+		copy := make(map[string]string, len(v))
+		for key, entry := range v {
+			copy[key] = stringFromAny(entry)
+		}
+		return copy, nil
+	default:
+		return nil, fmt.Errorf("unexpected inventory cache payload type %T", value)
+	}
 }

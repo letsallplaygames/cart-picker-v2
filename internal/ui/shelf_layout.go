@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 
@@ -25,14 +26,16 @@ type ShelfLayoutTab struct {
 	currentBoxIdx    int
 	root             fyne.CanvasObject
 	gridHolder       *fyne.Container
-	quantityLabel    *widget.Label
-	nameLabel        *widget.Label
-	skuLabel         *widget.Label
-	locationLabel    *widget.Label
+	quantityText     *canvas.Text
+	nameText         *canvas.Text
+	skuText          *canvas.Text
+	locationText     *canvas.Text
+	dimensionsText   *canvas.Text
+	qtyAvailText     *canvas.Text
 	prevBtn          *widget.Button
 	nextBtn          *widget.Button
-	boxNameLabel     *widget.Label
-	boxDimsLabel     *widget.Label
+	boxNameText      *canvas.Text
+	boxDimsText      *canvas.Text
 	prevBoxBtn       *widget.Button
 	nextBoxBtn       *widget.Button
 }
@@ -46,47 +49,45 @@ func NewShelfLayoutTab(profile domain.CartProfile, ledController *led.Controller
 		currentBoxIdx:    0,
 		boxes:            append([]domain.Box(nil), boxing.Boxes...),
 		gridHolder:       container.NewMax(widget.NewLabel("No shipments selected")),
-		quantityLabel:    widget.NewLabel(""),
-		nameLabel:        widget.NewLabel("No items to pick"),
-		skuLabel:         widget.NewLabel(""),
-		locationLabel:    widget.NewLabel(""),
-		boxNameLabel:     widget.NewLabel("No Boxes"),
-		boxDimsLabel:     widget.NewLabel(""),
+		quantityText:     newHeaderText("", 46, true),
+		nameText:         newHeaderText("No items to pick", 52, true),
+		skuText:          newHeaderText("", 18, false),
+		locationText:     newHeaderText("", 46, true),
+		dimensionsText:   newHeaderText("", 18, false),
+		qtyAvailText:     newHeaderText("", 18, false),
+		boxNameText:      newHeaderText("No Boxes", 52, true),
+		boxDimsText:      newHeaderText("", 18, false),
 	}
 
-	t.quantityLabel.Alignment = fyne.TextAlignCenter
-	t.nameLabel.Alignment = fyne.TextAlignCenter
-	t.skuLabel.Alignment = fyne.TextAlignCenter
-	t.locationLabel.Alignment = fyne.TextAlignCenter
-	t.boxNameLabel.Alignment = fyne.TextAlignCenter
-	t.boxDimsLabel.Alignment = fyne.TextAlignCenter
-
-	t.prevBtn = widget.NewButton("Previous", t.ShowPrevious)
-	t.nextBtn = widget.NewButton("Next", t.ShowNext)
-	t.prevBoxBtn = widget.NewButton("Previous Box", func() {
-		if t.currentBoxIdx > 0 {
-			t.currentBoxIdx--
-			t.updateDisplay()
-		}
-	})
-	t.nextBoxBtn = widget.NewButton("Next Box", func() {
-		if t.currentBoxIdx < len(t.boxes)-1 {
-			t.currentBoxIdx++
-			t.updateDisplay()
-		}
-	})
+	t.prevBtn = widget.NewButton("← Previous", t.ShowPrevious)
+	t.prevBtn.Importance = widget.HighImportance
+	t.nextBtn = widget.NewButton("Next →", t.ShowNext)
+	t.nextBtn.Importance = widget.HighImportance
+	t.prevBoxBtn = widget.NewButton("← Previous Box", t.ShowPreviousBox)
+	t.prevBoxBtn.Importance = widget.HighImportance
+	t.nextBoxBtn = widget.NewButton("Next Box →", t.ShowNextBox)
+	t.nextBoxBtn.Importance = widget.HighImportance
 
 	var top fyne.CanvasObject
 	if enableBoxCycling {
-		top = container.NewVBox(
-			container.NewHBox(t.prevBoxBtn, t.boxNameLabel, t.boxDimsLabel, t.nextBoxBtn),
+		top = makeUnifiedHeader(
+			t.prevBoxBtn,
+			t.quantityText,
+			t.nextBoxBtn,
+			t.locationText,
+			t.boxNameText,
+			t.boxDimsText,
 		)
 	} else {
-		top = container.NewVBox(
-			container.NewHBox(t.prevBtn, t.quantityLabel, t.nextBtn),
-			t.nameLabel,
-			t.skuLabel,
-			t.locationLabel,
+		top = makeUnifiedHeader(
+			t.prevBtn,
+			t.quantityText,
+			t.nextBtn,
+			t.locationText,
+			t.nameText,
+			t.skuText,
+			t.dimensionsText,
+			t.qtyAvailText,
 		)
 	}
 
@@ -131,15 +132,31 @@ func (t *ShelfLayoutTab) ShowPrevious() {
 	}
 }
 
+func (t *ShelfLayoutTab) ShowNextBox() {
+	if t.currentBoxIdx < len(t.boxes)-1 {
+		t.currentBoxIdx++
+		t.updateDisplay()
+	}
+}
+
+func (t *ShelfLayoutTab) ShowPreviousBox() {
+	if t.currentBoxIdx > 0 {
+		t.currentBoxIdx--
+		t.updateDisplay()
+	}
+}
+
 func (t *ShelfLayoutTab) updateDisplay() {
 	if t == nil {
 		return
 	}
 
 	if t.enableBoxCycling {
+		setHeaderText(t.quantityText, "")
+		setHeaderText(t.locationText, "")
 		if len(t.boxes) == 0 {
-			t.boxNameLabel.SetText("No Boxes")
-			t.boxDimsLabel.SetText("")
+			setHeaderText(t.boxNameText, "No Boxes")
+			setHeaderText(t.boxDimsText, "")
 			t.prevBoxBtn.Disable()
 			t.nextBoxBtn.Disable()
 		} else {
@@ -147,8 +164,8 @@ func (t *ShelfLayoutTab) updateDisplay() {
 				t.currentBoxIdx = 0
 			}
 			box := t.boxes[t.currentBoxIdx]
-			t.boxNameLabel.SetText(box.Name)
-			t.boxDimsLabel.SetText(fmt.Sprintf("%.3fft³ • %.3f×%.3f×%.3f in", box.Volume, box.Length, box.Width, box.Height))
+			setHeaderText(t.boxNameText, box.Name)
+			setHeaderText(t.boxDimsText, fmt.Sprintf("%.3fft³ • %.3f×%.3f×%.3f in", box.Volume, box.Length, box.Width, box.Height))
 			if t.currentBoxIdx <= 0 {
 				t.prevBoxBtn.Disable()
 			} else {
@@ -165,10 +182,12 @@ func (t *ShelfLayoutTab) updateDisplay() {
 	}
 
 	if len(t.pickItems) == 0 || t.currentIdx < 0 || t.currentIdx >= len(t.pickItems) {
-		t.quantityLabel.SetText("")
-		t.nameLabel.SetText("No items to pick")
-		t.skuLabel.SetText("")
-		t.locationLabel.SetText("")
+		setHeaderText(t.quantityText, "")
+		setHeaderText(t.nameText, "No items to pick")
+		setHeaderText(t.skuText, "")
+		setHeaderText(t.locationText, "")
+		setHeaderText(t.dimensionsText, "")
+		setHeaderText(t.qtyAvailText, "")
 		t.prevBtn.Disable()
 		t.nextBtn.Disable()
 		t.rebuildGrid()
@@ -182,10 +201,12 @@ func (t *ShelfLayoutTab) updateDisplay() {
 		location = current.Shipments[0].Location
 	}
 
-	t.quantityLabel.SetText(fmt.Sprintf("Qty %d", current.Quantity))
-	t.nameLabel.SetText(current.Name)
-	t.skuLabel.SetText(current.SKU)
-	t.locationLabel.SetText(fallbackLocation(location))
+	setHeaderText(t.quantityText, fmt.Sprintf("Qty %d", current.Quantity))
+	setHeaderText(t.nameText, current.Name)
+	setHeaderText(t.skuText, current.SKU)
+	setHeaderText(t.locationText, fallbackLocation(location))
+	setHeaderText(t.dimensionsText, formatDimensions(current))
+	setHeaderText(t.qtyAvailText, formatQtyAvailable(current.QtyAvailable))
 	if t.currentIdx <= 0 {
 		t.prevBtn.Disable()
 	} else {
@@ -242,7 +263,7 @@ func (t *ShelfLayoutTab) rebuildGrid() {
 					qty := qtyByExternal[cell.ExternalID]
 					if qty > 0 {
 						fill = quantityFillColor(qty)
-						footerText = fmt.Sprintf("Qty %d", qty)
+						footerText = fmt.Sprintf("%d", qty)
 					}
 					if currentLocation != "" && location == currentLocation && qty == 0 {
 						fill = color.NRGBA{R: 0xdd, G: 0xee, B: 0xff, A: 0xff}
@@ -283,4 +304,21 @@ func (t *ShelfLayoutTab) updateLEDs(item *domain.PickItem) {
 
 	t.led.ClearLEDs()
 	t.led.HighlightLocations(locations, [3]byte{0, 255, 0})
+}
+
+func formatDimensions(item domain.PickItem) string {
+	if item.Length <= 0 && item.Width <= 0 && item.Height <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("Dimensions %.2f × %.2f × %.2f", item.Length, item.Width, item.Height)
+}
+
+func formatQtyAvailable(qty float64) string {
+	if qty < 0 {
+		return ""
+	}
+	if qty == float64(int64(qty)) {
+		return fmt.Sprintf("Available %d", int64(qty))
+	}
+	return fmt.Sprintf("Available %.2f", qty)
 }

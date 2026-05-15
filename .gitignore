@@ -3,6 +3,5 @@
 *.db-shm
 *.db-wal
 dist/
-sku_location_cache.json
 app.log
 /old

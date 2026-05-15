@@ -302,7 +302,6 @@ func (t *ShipmentListTab) onBatchChecked(batchID string, checked bool) {
 					t.onSelChanged()
 				}
 				t.Refresh()
-				t.tree.OpenBranch(batchNodePrefix + batchID)
 			})
 		})
 		return

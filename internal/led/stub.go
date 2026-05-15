@@ -2,7 +2,10 @@
 
 package led
 
-import "log/slog"
+import (
+	"log/slog"
+	"maps"
+)
 
 type Controller struct {
 	ledMap map[string]int
@@ -27,9 +30,7 @@ func (c *Controller) LoadMappings(m map[string]int) {
 		return
 	}
 	c.ledMap = make(map[string]int, len(m))
-	for key, value := range m {
-		c.ledMap[key] = value
-	}
+	maps.Copy(c.ledMap, m)
 }
 
 func (c *Controller) HighlightLocations(locations []string, color [3]byte) {

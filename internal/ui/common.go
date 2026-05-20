@@ -64,8 +64,18 @@ func quantityFillColor(quantity int) color.NRGBA {
 }
 
 func quantityLEDColor(quantity int) [3]byte {
-	fill := quantityFillColor(quantity)
-	return [3]byte{fill.R, fill.G, fill.B}
+	switch {
+	case quantity > 3:
+		return [3]byte{0xff, 0x00, 0x00}
+	case quantity > 2:
+		return [3]byte{0x80, 0x00, 0x80}
+	case quantity > 1:
+		return [3]byte{0xff, 0xa5, 0x00}
+	default:
+		// Use a saturated green for the physical LEDs. The softer UI green
+		// used in the cart grid reads as nearly white on the hardware.
+		return [3]byte{0x00, 0xff, 0x00}
+	}
 }
 
 func makeGridCell(location, centerText, footerText string, fill color.NRGBA, scale float32) fyne.CanvasObject {

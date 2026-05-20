@@ -50,10 +50,10 @@ func NewShelfLayoutTab(profile domain.CartProfile, ledController *led.Controller
 		boxes:            append([]domain.Box(nil), boxing.Boxes...),
 		gridHolder:       container.NewMax(widget.NewLabel("No shipments selected")),
 		quantityText:     newHeaderText("", 46, true),
-		nameLabel:        newHeaderTitleText("No items to pick", 56),
+		nameLabel:        newHeaderTitleText("No items to pick", 64),
 		detailsLabel:     widget.NewLabel(""),
 		locationText:     newHeaderText("", 46, true),
-		boxNameText:      newHeaderTitleText("No Boxes", 56),
+		boxNameText:      newHeaderTitleText("No Boxes", 64),
 		boxDimsText:      newWrappedHeaderLabel("", theme.SizeNameText, false),
 	}
 	t.detailsLabel.Alignment = fyne.TextAlignCenter

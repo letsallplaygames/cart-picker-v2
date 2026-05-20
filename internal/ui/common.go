@@ -123,7 +123,7 @@ func makeUnifiedHeader(leftButton *widget.Button, leftValue fyne.CanvasObject, r
 		container.NewCenter(valueOrSpacer(rightValue)),
 	)
 	centerContent := container.NewVBox(centerLines...)
-	centerScroll := container.NewVScroll(centerContent)
+	centerScroll := container.NewScroll(centerContent)
 	centerScroll.SetMinSize(fyne.NewSize(1, headerCenterMinHeight))
 	return wrapWithMargin(container.NewPadded(container.NewBorder(nil, nil, leftPane, rightPane, centerScroll)), 14, 10)
 }
@@ -271,7 +271,7 @@ func applyHeaderLabelScale(scale float32, primary *widget.Label, secondary ...*w
 }
 
 func applyHeaderTitleScale(scale float32, titles ...*canvas.Text) {
-	size := clampFloat32(56*scale, 24, 56)
+	size := clampFloat32(64*scale, 24, 64)
 	for _, title := range titles {
 		if title == nil {
 			continue

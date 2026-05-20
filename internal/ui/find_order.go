@@ -43,7 +43,7 @@ func NewFindOrderTab(profile domain.CartProfile, ledController *led.Controller) 
 		details:       map[string]FindOrderDetail{},
 		currentIdx:    -1,
 		quantityText:  newHeaderText("0 / 0", 46, true),
-		customerLabel: newHeaderTitleText("No shipments available", 56),
+		customerLabel: newHeaderTitleText("No shipments available", 64),
 		detailsLabel:  widget.NewLabel(""),
 		locationText:  newHeaderText("", 46, true),
 		searchEntry:   widget.NewEntry(),

@@ -66,6 +66,7 @@ func NewApp(cfg *config.AppConfig, profile domain.CartProfile, p *picker.Picker,
 	a.tabs = a.buildTabs()
 	a.currentTabName = "Shipments"
 	a.window.SetContent(container.NewBorder(nil, a.statusLabel, nil, nil, a.tabs))
+	a.window.Canvas().SetOnTypedRune(a.onTypedRune)
 	a.window.Canvas().SetOnTypedKey(a.onTypedKey)
 	a.window.Resize(fyne.NewSize(1400, 900))
 
@@ -410,6 +411,7 @@ func (a *App) onTabChanged(tab *container.TabItem) {
 	case "Find Order":
 		if a.findOrderTab != nil {
 			a.findOrderTab.refreshResponsiveLayout()
+			a.findOrderTab.FocusSearch(a.window.Canvas())
 		}
 		a.statusLabel.SetText("Find Order ready")
 	case "Boxes":
@@ -418,6 +420,16 @@ func (a *App) onTabChanged(tab *container.TabItem) {
 		}
 		a.statusLabel.SetText("Boxes view ready")
 	}
+}
+
+func (a *App) onTypedRune(r rune) {
+	if a == nil || a.currentTabName != "Find Order" || a.findOrderTab == nil || a.window == nil {
+		return
+	}
+	if a.window.Canvas().Focused() == a.findOrderTab.searchEntry {
+		return
+	}
+	a.findOrderTab.HandleScannerRune(r)
 }
 
 func (a *App) onTypedKey(ev *fyne.KeyEvent) {
@@ -451,6 +463,9 @@ func (a *App) onTypedKey(ev *fyne.KeyEvent) {
 			return
 		}
 		if a.window != nil && a.window.Canvas().Focused() == a.findOrderTab.searchEntry {
+			return
+		}
+		if a.findOrderTab.HandleScannerKey(ev) {
 			return
 		}
 		switch ev.Name {

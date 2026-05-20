@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"image/color"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -194,12 +196,21 @@ func (t *FindOrderTab) processSearchInput() {
 		return
 	}
 
-	raw := strings.TrimSpace(t.searchEntry.Text)
+	raw := t.searchEntry.Text
+	t.searchEntry.SetText("")
+	t.processSearchValue(raw)
+}
+
+func (t *FindOrderTab) processSearchValue(raw string) {
+	if t == nil {
+		return
+	}
+
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return
 	}
 	queries := normalizedSearchQueries(raw)
-	t.searchEntry.SetText("")
 	if len(queries) == 0 {
 		return
 	}
@@ -232,6 +243,60 @@ func (t *FindOrderTab) processSearchInput() {
 	}
 
 	t.setSearchStatus(fmt.Sprintf("No shipment found for %s", raw))
+}
+
+func (t *FindOrderTab) HandleScannerRune(r rune) bool {
+	if t == nil || !t.active {
+		return false
+	}
+	if !unicode.IsPrint(r) {
+		return false
+	}
+	t.trackingBuf += string(r)
+	return true
+}
+
+func (t *FindOrderTab) HandleScannerKey(ev *fyne.KeyEvent) bool {
+	if t == nil || !t.active || ev == nil {
+		return false
+	}
+
+	switch ev.Name {
+	case fyne.KeyEscape:
+		t.trackingBuf = ""
+		t.setSearchStatus("Tracking input cleared")
+		return true
+	case fyne.KeyBackspace:
+		if t.trackingBuf == "" {
+			return true
+		}
+		_, size := utf8.DecodeLastRuneInString(t.trackingBuf)
+		if size > 0 {
+			t.trackingBuf = t.trackingBuf[:len(t.trackingBuf)-size]
+		}
+		return true
+	case fyne.KeyReturn, fyne.KeyEnter:
+		if strings.TrimSpace(t.trackingBuf) == "" {
+			return false
+		}
+		raw := t.trackingBuf
+		t.trackingBuf = ""
+		t.processSearchValue(raw)
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *FindOrderTab) FocusSearch(canvas fyne.Canvas) {
+	if t == nil {
+		return
+	}
+	t.trackingBuf = ""
+	t.setSearchStatus("")
+	if canvas != nil && t.searchEntry != nil {
+		canvas.Focus(t.searchEntry)
+	}
 }
 
 func (t *FindOrderTab) setSearchStatus(value string) {

@@ -87,9 +87,9 @@ func NewPickListTab() *PickListTab {
 			label.Refresh()
 		},
 	)
-	t.table.SetColumnWidth(pickListColumnProduct, 560)
-	t.table.SetColumnWidth(pickListColumnQuantity, 120)
-	t.table.SetColumnWidth(pickListColumnLocation, 240)
+	t.table.SetColumnWidth(pickListColumnProduct, 420)
+	t.table.SetColumnWidth(pickListColumnQuantity, 90)
+	t.table.SetColumnWidth(pickListColumnLocation, 150)
 
 	t.root = container.NewPadded(container.NewBorder(t.status, nil, nil, nil, t.table))
 	return t

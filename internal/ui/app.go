@@ -391,9 +391,19 @@ func (a *App) onTabChanged(tab *container.TabItem) {
 	a.currentTabName = tab.Text
 
 	switch tab.Text {
+	case "Pick Cart":
+		if a.shelfLayoutTab != nil {
+			a.shelfLayoutTab.refreshResponsiveLayout()
+		}
 	case "Find Order":
+		if a.findOrderTab != nil {
+			a.findOrderTab.refreshResponsiveLayout()
+		}
 		a.statusLabel.SetText("Find Order ready")
 	case "Boxes":
+		if a.boxesTab != nil {
+			a.boxesTab.refreshResponsiveLayout()
+		}
 		a.statusLabel.SetText("Boxes view ready")
 	}
 }

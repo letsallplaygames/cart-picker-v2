@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"pickcart/internal/domain"
@@ -23,10 +24,10 @@ type FindOrderTab struct {
 	trackingBuf    string
 	trackingLoaded bool
 	quantityText   *canvas.Text
-	customerText   *canvas.Text
-	orderText      *canvas.Text
+	customerLabel  *widget.Label
+	orderLabel     *widget.Label
 	locationText   *canvas.Text
-	trackingText   *canvas.Text
+	trackingLabel  *widget.Label
 	searchEntry    *widget.Entry
 	searchStatus   *widget.Label
 	prevBtn        *widget.Button
@@ -37,18 +38,18 @@ type FindOrderTab struct {
 
 func NewFindOrderTab(profile domain.CartProfile, ledController *led.Controller) *FindOrderTab {
 	t := &FindOrderTab{
-		profile:      profile,
-		led:          ledController,
-		details:      map[string]FindOrderDetail{},
-		currentIdx:   -1,
-		quantityText: newHeaderText("0 / 0", 46, true),
-		customerText: newHeaderText("No shipments available", 52, true),
-		orderText:    newHeaderText("", 18, false),
-		locationText: newHeaderText("", 46, true),
-		trackingText: newHeaderText("", 18, false),
-		searchEntry:  widget.NewEntry(),
-		searchStatus: widget.NewLabel(""),
-		gridHolder:   container.NewMax(widget.NewLabel("No shipments selected")),
+		profile:       profile,
+		led:           ledController,
+		details:       map[string]FindOrderDetail{},
+		currentIdx:    -1,
+		quantityText:  newHeaderText("0 / 0", 46, true),
+		customerLabel: newWrappedHeaderLabel("No shipments available", theme.SizeNameHeadingText, true),
+		orderLabel:    newWrappedHeaderLabel("", theme.SizeNameText, false),
+		locationText:  newHeaderText("", 46, true),
+		trackingLabel: newWrappedHeaderLabel("", theme.SizeNameText, false),
+		searchEntry:   widget.NewEntry(),
+		searchStatus:  widget.NewLabel(""),
+		gridHolder:    container.NewMax(widget.NewLabel("No shipments selected")),
 	}
 	for _, label := range []*widget.Label{t.searchStatus} {
 		label.Alignment = fyne.TextAlignCenter
@@ -66,9 +67,9 @@ func NewFindOrderTab(profile domain.CartProfile, ledController *led.Controller) 
 		t.quantityText,
 		t.nextBtn,
 		t.locationText,
-		t.customerText,
-		t.orderText,
-		t.trackingText,
+		t.customerLabel,
+		t.orderLabel,
+		t.trackingLabel,
 	)
 	t.root = container.NewBorder(
 		container.NewVBox(
@@ -79,7 +80,7 @@ func NewFindOrderTab(profile domain.CartProfile, ledController *led.Controller) 
 		nil,
 		nil,
 		nil,
-		container.NewVScroll(t.gridHolder),
+		container.NewScroll(t.gridHolder),
 	)
 	t.navigateTo(-1)
 	return t
@@ -120,13 +121,15 @@ func (t *FindOrderTab) ShowPrevious() {
 }
 
 func (t *FindOrderTab) navigateTo(idx int) {
+	t.applyResponsiveHeaderScale()
+
 	if idx < 0 || idx >= len(t.entries) {
 		t.currentIdx = -1
 		setHeaderText(t.quantityText, "0 / 0")
-		setHeaderText(t.customerText, "No shipments available")
-		setHeaderText(t.orderText, "")
+		setHeaderLabelText(t.customerLabel, "No shipments available")
+		setHeaderLabelText(t.orderLabel, "")
 		setHeaderText(t.locationText, "")
-		setHeaderText(t.trackingText, "")
+		setHeaderLabelText(t.trackingLabel, "")
 		t.prevBtn.Disable()
 		t.nextBtn.Disable()
 		t.rebuildGrid("")
@@ -143,13 +146,13 @@ func (t *FindOrderTab) navigateTo(idx int) {
 	tracking := firstNonEmpty(detail.TrackingNumber, entry.TrackingNumber)
 
 	setHeaderText(t.quantityText, fmt.Sprintf("%d / %d", idx+1, len(t.entries)))
-	setHeaderText(t.customerText, firstNonEmpty(detail.CustomerName, "Unknown Customer"))
-	setHeaderText(t.orderText, fmt.Sprintf("Order %s", firstNonEmpty(entry.ExternalID, entry.ShipmentID)))
+	setHeaderLabelText(t.customerLabel, firstNonEmpty(detail.CustomerName, "Unknown Customer"))
+	setHeaderLabelText(t.orderLabel, fmt.Sprintf("Order %s", compactShipmentDisplayID(firstNonEmpty(entry.ExternalID, entry.ShipmentID))))
 	setHeaderText(t.locationText, fallbackLocation(location))
 	if tracking == "" && !t.trackingLoaded {
 		tracking = "Tracking not loaded yet"
 	}
-	setHeaderText(t.trackingText, fmt.Sprintf("Tracking %s", tracking))
+	setHeaderLabelText(t.trackingLabel, fmt.Sprintf("Tracking %s", tracking))
 
 	if idx <= 0 {
 		t.prevBtn.Disable()
@@ -165,7 +168,7 @@ func (t *FindOrderTab) navigateTo(idx int) {
 	if t.led != nil {
 		t.led.ClearLEDs()
 		if location != "" {
-			t.led.HighlightLocations([]string{location}, [3]byte{0, 255, 0})
+			t.led.HighlightLocations([]string{location}, quantityLEDColor(1))
 		}
 	}
 	t.rebuildGrid(entry.ShipmentID)
@@ -256,6 +259,7 @@ func (t *FindOrderTab) findGridLocation(gridIndex int) string {
 
 func (t *FindOrderTab) rebuildGrid(activeShipmentID string) {
 	rows := locationRows(t.profile)
+	gridScale := gridScaleForWidth(t.root.Size().Width, maxColumnsForRows(rows))
 	entryByLocation := make(map[string]FindOrderEntry, len(t.entries))
 	for _, entry := range t.entries {
 		location := t.findGridLocation(entry.GridIndex)
@@ -273,17 +277,49 @@ func (t *FindOrderTab) rebuildGrid(activeShipmentID string) {
 			centerText := ""
 			footerText := ""
 			if ok {
-				centerText = entry.ExternalID
+				centerText = compactShipmentDisplayID(entry.ExternalID)
 				if entry.ShipmentID == activeShipmentID {
 					fill = color.NRGBA{R: 0x90, G: 0xee, B: 0x90, A: 0xff}
 					footerText = "Active"
 				}
 			}
-			cellObjects = append(cellObjects, makeGridCell(location, centerText, footerText, fill))
+			cellObjects = append(cellObjects, makeGridCell(location, centerText, footerText, fill, gridScale))
 		}
 		rowObjects = append(rowObjects, container.NewGridWithColumns(len(cellObjects), cellObjects...))
 	}
 
 	t.gridHolder.Objects = []fyne.CanvasObject{container.NewVBox(rowObjects...)}
 	t.gridHolder.Refresh()
+}
+
+func (t *FindOrderTab) refreshResponsiveLayout() {
+	if t == nil {
+		return
+	}
+	t.applyResponsiveHeaderScale()
+	t.rebuildGrid(t.activeShipmentID())
+}
+
+func (t *FindOrderTab) activeShipmentID() string {
+	if t == nil || t.currentIdx < 0 || t.currentIdx >= len(t.entries) {
+		return ""
+	}
+	return t.entries[t.currentIdx].ShipmentID
+}
+
+func (t *FindOrderTab) applyResponsiveHeaderScale() {
+	if t == nil {
+		return
+	}
+
+	scale := headerScaleForWidth(t.root.Size().Width)
+	t.quantityText.TextSize = 46 * scale
+	t.locationText.TextSize = 46 * scale
+
+	for _, text := range []*canvas.Text{t.quantityText, t.locationText} {
+		if text != nil {
+			text.Refresh()
+		}
+	}
+	applyHeaderLabelScale(scale, t.customerLabel, t.orderLabel, t.trackingLabel)
 }

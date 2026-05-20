@@ -67,6 +67,23 @@ func (p *Provider) GetBatchShipments(batchID string, forceRefresh bool) ([]*doma
 		return nil, err
 	}
 
+	return p.mapShipments(rows), nil
+}
+
+func (p *Provider) GetShipmentsByIDs(ids []string, forceRefresh bool) ([]*domain.Shipment, error) {
+	if p == nil || p.client == nil {
+		return nil, fmt.Errorf("odoo provider client is not initialized")
+	}
+
+	rows, err := p.client.GetShipmentsByIDs(ids, forceRefresh)
+	if err != nil {
+		return nil, err
+	}
+
+	return p.mapShipments(rows), nil
+}
+
+func (p *Provider) mapShipments(rows []map[string]any) []*domain.Shipment {
 	shipments := make([]*domain.Shipment, 0, len(rows))
 	for _, row := range rows {
 		shipmentID := intFromAny(row["id"])
@@ -89,7 +106,7 @@ func (p *Provider) GetBatchShipments(batchID string, forceRefresh bool) ([]*doma
 		})
 	}
 
-	return shipments, nil
+	return shipments
 }
 
 func (p *Provider) GetBatchShipmentItemsBulk(ids []string, skuLocations map[string]string) (map[string]BulkResult, error) {

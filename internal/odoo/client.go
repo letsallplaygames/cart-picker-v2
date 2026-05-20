@@ -309,7 +309,7 @@ func (c *Client) GetBatchShipments(batchID int, forceRefresh bool) ([]map[string
 				[]any{"picking_type_id", "=", lenexaPickingTypeID},
 				[]any{"state", "in", []any{"assigned", "done"}},
 			},
-			[]string{"id", "name", "partner_id", "carrier_id", "carrier_tracking_ref", "origin", "batch_id", "state"},
+			stockPickingFields(),
 			pageSize,
 			offset,
 			"id desc",
@@ -327,6 +327,37 @@ func (c *Client) GetBatchShipments(batchID int, forceRefresh bool) ([]map[string
 	}
 
 	return allRows, nil
+}
+
+func (c *Client) GetShipmentsByIDs(shipmentIDs []string, forceRefresh bool) ([]map[string]any, error) {
+	intIDs, err := parseStringIDs(shipmentIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(intIDs) == 0 {
+		return nil, nil
+	}
+
+	rows, err := c.Read("stock.picking", intIDs, stockPickingFields(), forceRefresh)
+	if err != nil {
+		return nil, err
+	}
+
+	rowsByID := make(map[int]map[string]any, len(rows))
+	for _, row := range rows {
+		id := intFromAny(row["id"])
+		if id > 0 {
+			rowsByID[id] = row
+		}
+	}
+
+	ordered := make([]map[string]any, 0, len(intIDs))
+	for _, id := range intIDs {
+		if row, ok := rowsByID[id]; ok {
+			ordered = append(ordered, row)
+		}
+	}
+	return ordered, nil
 }
 
 func (c *Client) GetBatchShipmentItemsBulk(shipmentIDs []string, forceRefresh bool, skuLocations map[string]string) (map[string]BulkResult, error) {
@@ -411,6 +442,10 @@ func (c *Client) GetBatchShipmentItemsBulk(shipmentIDs []string, forceRefresh bo
 	}
 
 	return results, nil
+}
+
+func stockPickingFields() []string {
+	return []string{"id", "name", "partner_id", "carrier_id", "carrier_tracking_ref", "origin", "batch_id", "state"}
 }
 
 func (c *Client) GetTrackingNumbers(shipmentIDs []string) (map[string]string, error) {

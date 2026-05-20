@@ -123,10 +123,28 @@ func (p *Picker) LoadBatchShipments(batchID string, forceRefresh bool, callback 
 			return
 		}
 
+		p.mu.RLock()
+		fallbackIDs := []string(nil)
+		for _, batch := range p.Batches {
+			if batch == nil || batch.ID != batchID {
+				continue
+			}
+			fallbackIDs = append([]string(nil), batch.ShipmentIDs...)
+			break
+		}
+		p.mu.RUnlock()
+
 		shipments, err := p.provider.GetBatchShipments(batchID, forceRefresh)
 		if err != nil {
 			invokeShipmentCallback(callback, nil, err)
 			return
+		}
+		if len(shipments) == 0 && len(fallbackIDs) > 0 {
+			shipments, err = p.provider.GetShipmentsByIDs(fallbackIDs, forceRefresh)
+			if err != nil {
+				invokeShipmentCallback(callback, nil, err)
+				return
+			}
 		}
 
 		shipmentIDs := make([]string, 0, len(shipments))

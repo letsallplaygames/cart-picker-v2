@@ -34,20 +34,28 @@ func (c *Controller) LoadMappings(m map[string]int) {
 }
 
 func (c *Controller) HighlightLocations(locations []string, color [3]byte) {
-	if c == nil || len(locations) == 0 {
+	locationColors := make(map[string][3]byte, len(locations))
+	for _, location := range locations {
+		locationColors[location] = color
+	}
+	c.HighlightLocationColors(locationColors)
+}
+
+func (c *Controller) HighlightLocationColors(locationColors map[string][3]byte) {
+	if c == nil || len(locationColors) == 0 {
 		return
 	}
 	if len(c.ledMap) == 0 {
-		slog.Debug("ignoring LED highlight request because no mappings are loaded", "locations", locations)
+		slog.Debug("ignoring LED highlight request because no mappings are loaded", "location_colors", locationColors)
 		return
 	}
 	mapped := 0
-	for _, location := range locations {
+	for location := range locationColors {
 		if _, ok := c.ledMap[location]; ok {
 			mapped++
 		}
 	}
-	slog.Debug("simulating LED highlights", "locations", locations, "mapped", mapped, "color", color)
+	slog.Debug("simulating LED highlights", "location_colors", locationColors, "mapped", mapped)
 }
 
 func (c *Controller) ClearLEDs() {}

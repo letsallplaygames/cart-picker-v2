@@ -87,14 +87,21 @@ func (c *Controller) LoadMappings(m map[string]int) {
 }
 
 func (c *Controller) HighlightLocations(locations []string, color [3]byte) {
-	if c == nil || !c.ok {
+	locationColors := make(map[string][3]byte, len(locations))
+	for _, location := range locations {
+		locationColors[location] = color
+	}
+	c.HighlightLocationColors(locationColors)
+}
+
+func (c *Controller) HighlightLocationColors(locationColors map[string][3]byte) {
+	if c == nil || !c.ok || len(locationColors) == 0 {
 		return
 	}
 
 	c.ClearLEDs()
 
-	packed := packColor(color)
-	for _, location := range locations {
+	for location, color := range locationColors {
 		index, ok := c.ledMap[location]
 		if !ok {
 			continue
@@ -102,7 +109,7 @@ func (c *Controller) HighlightLocations(locations []string, color [3]byte) {
 		if index < 0 || index >= c.ledCount {
 			continue
 		}
-		C.led_set(C.int(index), C.uint32_t(packed))
+		C.led_set(C.int(index), C.uint32_t(packColor(color)))
 	}
 
 	if ret := C.led_render(); ret != C.WS2811_SUCCESS {
@@ -135,5 +142,7 @@ func (c *Controller) Cleanup() {
 }
 
 func packColor(color [3]byte) uint32 {
-	return uint32(color[0])<<16 | uint32(color[1])<<8 | uint32(color[2])
+	// The deployed carts use GRB strips, matching the legacy Python behavior
+	// that swapped red/green before sending colors to the controller.
+	return uint32(color[1])<<16 | uint32(color[0])<<8 | uint32(color[2])
 }

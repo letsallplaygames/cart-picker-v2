@@ -8,14 +8,20 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"pickcart/internal/domain"
 )
 
 const initialBatchLoadLimit = 10
-const pickNavButtonWidth float32 = 170
-const pickNavButtonHeight float32 = 52
+const pickNavButtonWidth float32 = 132
+const pickNavButtonHeight float32 = 40
+const idealGridCellWidth float32 = 72
+const idealGridCellHeight float32 = 60
+const minGridCellWidth float32 = 24
+const minGridCellHeight float32 = 26
+const headerCenterMinHeight float32 = 140
 
 func cartLocations(profile domain.CartProfile) []string {
 	locations := []string{}
@@ -57,15 +63,24 @@ func quantityFillColor(quantity int) color.NRGBA {
 	}
 }
 
-func makeGridCell(location, centerText, footerText string, fill color.NRGBA) fyne.CanvasObject {
+func quantityLEDColor(quantity int) [3]byte {
+	fill := quantityFillColor(quantity)
+	return [3]byte{fill.R, fill.G, fill.B}
+}
+
+func makeGridCell(location, centerText, footerText string, fill color.NRGBA, scale float32) fyne.CanvasObject {
+	scale = clampFloat32(scale, 0.35, 1)
+
 	bg := canvas.NewRectangle(fill)
-	bg.SetMinSize(fyne.NewSize(92, 82))
+	bg.SetMinSize(fyne.NewSize(minGridCellWidth, minGridCellHeight))
+	bg.StrokeColor = gridCellBorderColor(fill)
+	bg.StrokeWidth = clampFloat32(0.45*scale, 0.18, 0.45)
 
 	accentColor := gridCellAccentColor(fill)
 
 	locationLabel := canvas.NewText(location, accentColor)
 	locationLabel.Alignment = fyne.TextAlignCenter
-	locationLabel.TextSize = 22
+	locationLabel.TextSize = 22 * scale
 	locationLabel.TextStyle = fyne.TextStyle{Bold: true}
 
 	centerLabel := widget.NewLabel(centerText)
@@ -75,11 +90,11 @@ func makeGridCell(location, centerText, footerText string, fill color.NRGBA) fyn
 
 	footerLabel := canvas.NewText(footerText, accentColor)
 	footerLabel.Alignment = fyne.TextAlignCenter
-	footerLabel.TextSize = 20
+	footerLabel.TextSize = 20 * scale
 	footerLabel.TextStyle = fyne.TextStyle{Bold: true}
 
 	content := container.NewBorder(locationLabel, footerLabel, nil, nil, centerLabel)
-	return container.NewStack(bg, container.NewPadded(content))
+	return container.NewStack(bg, content)
 }
 
 func gridCellAccentColor(fill color.NRGBA) color.Color {
@@ -88,6 +103,14 @@ func gridCellAccentColor(fill color.NRGBA) color.Color {
 		return color.NRGBA{R: 0x20, G: 0x20, B: 0x20, A: 0xff}
 	}
 	return color.NRGBA{R: 0xf5, G: 0xf5, B: 0xf5, A: 0xff}
+}
+
+func gridCellBorderColor(fill color.NRGBA) color.Color {
+	brightness := (0.299*float64(fill.R) + 0.587*float64(fill.G) + 0.114*float64(fill.B)) / 255
+	if brightness >= 0.65 {
+		return color.NRGBA{R: 0x55, G: 0x55, B: 0x55, A: 0x88}
+	}
+	return color.NRGBA{R: 0xee, G: 0xee, B: 0xee, A: 0x66}
 }
 
 func makeUnifiedHeader(leftButton *widget.Button, leftValue fyne.CanvasObject, rightButton *widget.Button, rightValue fyne.CanvasObject, centerLines ...fyne.CanvasObject) fyne.CanvasObject {
@@ -99,8 +122,63 @@ func makeUnifiedHeader(leftButton *widget.Button, leftValue fyne.CanvasObject, r
 		container.NewCenter(container.NewGridWrap(fyne.NewSize(pickNavButtonWidth, pickNavButtonHeight), rightButton)),
 		container.NewCenter(valueOrSpacer(rightValue)),
 	)
-	centerPane := container.NewCenter(container.NewVBox(centerLines...))
-	return container.NewPadded(container.NewBorder(nil, nil, leftPane, rightPane, centerPane))
+	centerContent := container.NewVBox(centerLines...)
+	centerScroll := container.NewVScroll(centerContent)
+	centerScroll.SetMinSize(fyne.NewSize(1, headerCenterMinHeight))
+	return wrapWithMargin(container.NewPadded(container.NewBorder(nil, nil, leftPane, rightPane, centerScroll)), 14, 10)
+}
+
+func wrapWithMargin(content fyne.CanvasObject, horizontal float32, vertical float32) fyne.CanvasObject {
+	left := canvas.NewRectangle(color.Transparent)
+	left.SetMinSize(fyne.NewSize(horizontal, 1))
+	right := canvas.NewRectangle(color.Transparent)
+	right.SetMinSize(fyne.NewSize(horizontal, 1))
+	top := canvas.NewRectangle(color.Transparent)
+	top.SetMinSize(fyne.NewSize(1, vertical))
+	bottom := canvas.NewRectangle(color.Transparent)
+	bottom.SetMinSize(fyne.NewSize(1, vertical))
+	return container.NewBorder(top, bottom, left, right, content)
+}
+
+func headerScaleForWidth(width float32) float32 {
+	if width <= 0 {
+		return 0.75
+	}
+	return clampFloat32(width/1400, 0.5, 1)
+}
+
+func gridScaleForWidth(width float32, maxColumns int) float32 {
+	if maxColumns <= 0 {
+		return 0.6
+	}
+	if width <= 0 {
+		return 0.6
+	}
+	usableWidth := width - 64
+	if usableWidth <= 0 {
+		return 0.25
+	}
+	return clampFloat32((usableWidth/float32(maxColumns))/idealGridCellWidth, 0.25, 1)
+}
+
+func clampFloat32(value float32, min float32, max float32) float32 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func maxColumnsForRows(rows [][]string) int {
+	maxCols := 0
+	for _, row := range rows {
+		if len(row) > maxCols {
+			maxCols = len(row)
+		}
+	}
+	return maxCols
 }
 
 func valueOrSpacer(obj fyne.CanvasObject) fyne.CanvasObject {
@@ -120,12 +198,68 @@ func newHeaderText(value string, size float32, bold bool) *canvas.Text {
 	return text
 }
 
+func newWrappedHeaderLabel(value string, sizeName fyne.ThemeSizeName, bold bool) *widget.Label {
+	label := widget.NewLabel(value)
+	label.Alignment = fyne.TextAlignCenter
+	label.Wrapping = fyne.TextWrapWord
+	label.TextStyle = fyne.TextStyle{Bold: bold}
+	label.Importance = widget.HighImportance
+	label.SizeName = sizeName
+	return label
+}
+
 func setHeaderText(text *canvas.Text, value string) {
 	if text == nil {
 		return
 	}
 	text.Text = value
 	text.Refresh()
+}
+
+func setHeaderLabelText(label *widget.Label, value string) {
+	if label == nil {
+		return
+	}
+	label.SetText(value)
+}
+
+func applyHeaderLabelScale(scale float32, primary *widget.Label, secondary ...*widget.Label) {
+	if primary != nil {
+		switch {
+		case scale >= 0.9:
+			primary.SizeName = theme.SizeNameHeadingText
+		case scale >= 0.7:
+			primary.SizeName = theme.SizeNameSubHeadingText
+		default:
+			primary.SizeName = theme.SizeNameText
+		}
+		primary.Refresh()
+	}
+	for _, label := range secondary {
+		if label == nil {
+			continue
+		}
+		if scale >= 0.75 {
+			label.SizeName = theme.SizeNameText
+		} else {
+			label.SizeName = theme.SizeNameCaptionText
+		}
+		label.Refresh()
+	}
+}
+
+func compactShipmentDisplayID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(value, "/"); idx >= 0 && idx+1 < len(value) {
+		suffix := strings.TrimSpace(value[idx+1:])
+		if suffix != "" {
+			return suffix
+		}
+	}
+	return value
 }
 
 func fallbackLocation(location string) string {

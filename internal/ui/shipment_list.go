@@ -136,7 +136,7 @@ func NewShipmentListTab(p *picker.Picker, onSelChanged func()) *ShipmentListTab 
 				}
 
 				name.SetText(firstNonEmpty(shipment.ShipTo, shipment.ExternalID, shipment.ID))
-				details.SetText(firstNonEmpty(strings.TrimSpace(shipment.ServiceCode+" "+shipment.TrackingNumber), shipment.ServiceCode, shipment.TrackingNumber))
+				details.SetText(shipmentTreeDetails(shipment))
 				created.SetText("")
 			}
 		},
@@ -257,24 +257,10 @@ func (t *ShipmentListTab) onBatchTapped(batchID string) {
 	if batch == nil {
 		return
 	}
-	if batch.ShipmentsLoaded {
-		t.statusLabel.SetText(fmt.Sprintf("Loaded %d shipments for %s", len(batch.Shipments), batch.Name))
-		t.tree.OpenBranch(batchNodePrefix + batchID)
-		return
-	}
 
-	t.statusLabel.SetText(fmt.Sprintf("Loading shipments for %s...", batch.Name))
-	t.picker.LoadBatchShipments(batchID, false, func(shipments []*domain.Shipment, err error) {
-		fyne.Do(func() {
-			if err != nil {
-				t.statusLabel.SetText(fmt.Sprintf("Failed to load shipments: %v", err))
-				return
-			}
-			t.Refresh()
-			t.statusLabel.SetText(fmt.Sprintf("Loaded %d shipments for %s", len(shipments), batch.Name))
-			t.tree.OpenBranch(batchNodePrefix + batchID)
-		})
-	})
+	selectedCount, totalCount := t.batchSelectionState(batch)
+	targetChecked := !(totalCount > 0 && selectedCount == totalCount)
+	t.onBatchChecked(batchID, targetChecked)
 }
 
 func (t *ShipmentListTab) onBatchChecked(batchID string, checked bool) {
@@ -431,6 +417,18 @@ func (t *ShipmentListTab) batchSelectionState(batch *domain.Batch) (selectedCoun
 	return selectedCount, totalCount
 }
 
+func shipmentTreeDetails(shipment *domain.Shipment) string {
+	if shipment == nil {
+		return ""
+	}
+	service := strings.TrimSpace(shipment.ServiceCode)
+	tracking := strings.TrimSpace(shipment.TrackingNumber)
+	if len(tracking) > 12 {
+		tracking = tracking[:4] + "…" + tracking[len(tracking)-6:]
+	}
+	return firstNonEmpty(strings.TrimSpace(service+" "+tracking), service, tracking)
+}
+
 func formatBatchCreatedCT(ts time.Time) string {
 	if ts.IsZero() {
 		return ""
@@ -439,5 +437,5 @@ func formatBatchCreatedCT(ts time.Time) string {
 	if err == nil {
 		ts = ts.In(loc)
 	}
-	return ts.Format("Mon 01/02/06 03:04 PM MST")
+	return ts.Format("01/02/06 3:04 PM")
 }

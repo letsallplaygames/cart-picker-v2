@@ -1579,3 +1579,42 @@ This rewrite should be implemented bottom-up.
 
 This file is intended to be a working migration spec, not just a high-level idea list.
 If implementation choices differ, preserve the behavioral contract described above.
+
+---
+
+## 12. Current Progress Summary
+
+**Overall status:** The Go/Fyne rewrite is now far enough along for real workflow testing, including Pi hardware validation. Core Odoo data flow, cache integration, cart rendering, and LED control are all in place.
+
+### Working now
+- Odoo-backed batch, shipment, inventory, tracking, and bulk item loading are implemented.
+- BoltDB is the active cache backend for both API responses and SKU location caching.
+- LED mappings load from `pick_shelf_light_positions.csv` and are wired into both the stub and Linux controllers.
+- The Linux LED controller is driving `libws2811` directly through the project’s small CGo bridge.
+- Pick Cart LED behavior now targets cart-bin positions instead of warehouse source locations.
+- LED highlight colors now follow the same quantity-based color mapping used by the cart UI.
+- Active tabs now in use are:
+  - `Shipments`
+  - `Pick Cart`
+  - `Pick List`
+  - `Boxes`
+  - `Find Order`
+- The old `Next Pick` tab has been removed.
+- Find Order search supports tracking number, customer name, and external order ID matching.
+- Pick sorting now follows the warehouse serpentine route pattern (A ascending, B descending, etc.).
+- Pick Cart, Boxes, and Find Order share a unified top header style.
+
+### Recently improved
+- Batch selection no longer auto-expands the branch when selected.
+- Batch shipment loading now has a fallback path using `picking_ids` when direct batch queries return zero rows.
+- Shipment/cart displays now trim `LNX/OUT/` prefixes down to the meaningful trailing numeric portion.
+- Cart-grid bin location and quantity text were made easier to read.
+- Cart-grid borders were visually softened.
+- Product dimensions and quantity available are now populated from Odoo where available and shown in the Pick Cart header.
+- The shelf/cart views have had multiple responsive-layout passes for smaller screens.
+
+### Still in progress / follow-up items
+- The cart-display views still need final responsive tuning so the full app scales down cleanly on narrower laptop windows while still looking correct on the target 24" 1080p monitor.
+- Header wrapping / bounded vertical overflow in the shared cart header needs final visual validation across all cart-style tabs.
+- The Pi LED bridge is intentionally custom and minimal; it is sufficient for current functionality, but could still be revisited later if adopting an upstream Go binding becomes worthwhile.
+- Supporting project files like `.env.example`, `Makefile`, and release workflow are still not finalized.

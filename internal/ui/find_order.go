@@ -18,16 +18,16 @@ import (
 type FindOrderTab struct {
 	profile        domain.CartProfile
 	led            *led.Controller
+	active         bool
 	entries        []FindOrderEntry
 	details        map[string]FindOrderDetail
 	currentIdx     int
 	trackingBuf    string
 	trackingLoaded bool
 	quantityText   *canvas.Text
-	customerLabel  *widget.Label
-	orderLabel     *widget.Label
+	customerLabel  *canvas.Text
+	detailsLabel   *widget.Label
 	locationText   *canvas.Text
-	trackingLabel  *widget.Label
 	searchEntry    *widget.Entry
 	searchStatus   *widget.Label
 	prevBtn        *widget.Button
@@ -43,18 +43,23 @@ func NewFindOrderTab(profile domain.CartProfile, ledController *led.Controller) 
 		details:       map[string]FindOrderDetail{},
 		currentIdx:    -1,
 		quantityText:  newHeaderText("0 / 0", 46, true),
-		customerLabel: newWrappedHeaderLabel("No shipments available", theme.SizeNameHeadingText, true),
-		orderLabel:    newWrappedHeaderLabel("", theme.SizeNameText, false),
+		customerLabel: newHeaderTitleText("No shipments available", 56),
+		detailsLabel:  widget.NewLabel(""),
 		locationText:  newHeaderText("", 46, true),
-		trackingLabel: newWrappedHeaderLabel("", theme.SizeNameText, false),
 		searchEntry:   widget.NewEntry(),
 		searchStatus:  widget.NewLabel(""),
 		gridHolder:    container.NewMax(widget.NewLabel("No shipments selected")),
 	}
+	t.detailsLabel.Alignment = fyne.TextAlignCenter
+	t.detailsLabel.Wrapping = fyne.TextWrapOff
+	t.detailsLabel.TextStyle = fyne.TextStyle{}
+	t.detailsLabel.Importance = widget.HighImportance
+	t.detailsLabel.SizeName = theme.SizeNameText
 	for _, label := range []*widget.Label{t.searchStatus} {
 		label.Alignment = fyne.TextAlignCenter
 		label.Importance = widget.WarningImportance
 	}
+	t.searchStatus.Hide()
 
 	t.searchEntry.SetPlaceHolder("Scan tracking or search customer name, then press Enter")
 	t.searchEntry.OnSubmitted = func(string) { t.processSearchInput() }
@@ -68,19 +73,18 @@ func NewFindOrderTab(profile domain.CartProfile, ledController *led.Controller) 
 		t.nextBtn,
 		t.locationText,
 		t.customerLabel,
-		t.orderLabel,
-		t.trackingLabel,
+		t.detailsLabel,
 	)
+	searchArea := wrapWithMargin(container.NewVBox(t.searchEntry, t.searchStatus), 14, 4)
 	t.root = container.NewBorder(
 		container.NewVBox(
-			t.searchEntry,
-			t.searchStatus,
+			searchArea,
 			header,
 		),
 		nil,
 		nil,
 		nil,
-		container.NewScroll(t.gridHolder),
+		wrapWithMargin(container.NewVScroll(t.gridHolder), 14, 10),
 	)
 	t.navigateTo(-1)
 	return t
@@ -91,6 +95,22 @@ func (t *FindOrderTab) Object() fyne.CanvasObject {
 		return widget.NewLabel("")
 	}
 	return t.root
+}
+
+func (t *FindOrderTab) SetActive(active bool) {
+	if t == nil {
+		return
+	}
+	if t.active == active {
+		if active {
+			t.syncLEDs()
+		}
+		return
+	}
+	t.active = active
+	if active {
+		t.syncLEDs()
+	}
 }
 
 func (t *FindOrderTab) UpdateShipments(entries []FindOrderEntry) {
@@ -126,14 +146,13 @@ func (t *FindOrderTab) navigateTo(idx int) {
 	if idx < 0 || idx >= len(t.entries) {
 		t.currentIdx = -1
 		setHeaderText(t.quantityText, "0 / 0")
-		setHeaderLabelText(t.customerLabel, "No shipments available")
-		setHeaderLabelText(t.orderLabel, "")
+		setHeaderTitleText(t.customerLabel, "No shipments available")
+		setHeaderLabelText(t.detailsLabel, "")
 		setHeaderText(t.locationText, "")
-		setHeaderLabelText(t.trackingLabel, "")
 		t.prevBtn.Disable()
 		t.nextBtn.Disable()
 		t.rebuildGrid("")
-		if t.led != nil {
+		if t.active && t.led != nil {
 			t.led.ClearLEDs()
 		}
 		return
@@ -146,13 +165,9 @@ func (t *FindOrderTab) navigateTo(idx int) {
 	tracking := firstNonEmpty(detail.TrackingNumber, entry.TrackingNumber)
 
 	setHeaderText(t.quantityText, fmt.Sprintf("%d / %d", idx+1, len(t.entries)))
-	setHeaderLabelText(t.customerLabel, firstNonEmpty(detail.CustomerName, "Unknown Customer"))
-	setHeaderLabelText(t.orderLabel, fmt.Sprintf("Order %s", compactShipmentDisplayID(firstNonEmpty(entry.ExternalID, entry.ShipmentID))))
+	setHeaderTitleText(t.customerLabel, firstNonEmpty(detail.CustomerName, "Unknown Customer"))
+	setHeaderLabelText(t.detailsLabel, formatFindOrderDebugLine(entry, tracking, t.trackingLoaded))
 	setHeaderText(t.locationText, fallbackLocation(location))
-	if tracking == "" && !t.trackingLoaded {
-		tracking = "Tracking not loaded yet"
-	}
-	setHeaderLabelText(t.trackingLabel, fmt.Sprintf("Tracking %s", tracking))
 
 	if idx <= 0 {
 		t.prevBtn.Disable()
@@ -165,7 +180,7 @@ func (t *FindOrderTab) navigateTo(idx int) {
 		t.nextBtn.Enable()
 	}
 
-	if t.led != nil {
+	if t.active && t.led != nil {
 		t.led.ClearLEDs()
 		if location != "" {
 			t.led.HighlightLocations([]string{location}, quantityLEDColor(1))
@@ -199,24 +214,37 @@ func (t *FindOrderTab) processSearchInput() {
 				continue
 			}
 			if tracking != "" && strings.Contains(tracking, query) {
-				t.searchStatus.SetText(fmt.Sprintf("Matched tracking %s", raw))
+				t.setSearchStatus(fmt.Sprintf("Matched tracking %s", raw))
 				t.navigateTo(idx)
 				return
 			}
 			if customer != "" && strings.Contains(customer, query) {
-				t.searchStatus.SetText(fmt.Sprintf("Matched customer %s", detail.CustomerName))
+				t.setSearchStatus(fmt.Sprintf("Matched customer %s", detail.CustomerName))
 				t.navigateTo(idx)
 				return
 			}
 			if orderID != "" && strings.Contains(orderID, query) {
-				t.searchStatus.SetText(fmt.Sprintf("Matched order %s", entry.ExternalID))
+				t.setSearchStatus(fmt.Sprintf("Matched order %s", entry.ExternalID))
 				t.navigateTo(idx)
 				return
 			}
 		}
 	}
 
-	t.searchStatus.SetText(fmt.Sprintf("No shipment found for %s", raw))
+	t.setSearchStatus(fmt.Sprintf("No shipment found for %s", raw))
+}
+
+func (t *FindOrderTab) setSearchStatus(value string) {
+	if t == nil || t.searchStatus == nil {
+		return
+	}
+	value = strings.TrimSpace(value)
+	t.searchStatus.SetText(value)
+	if value == "" {
+		t.searchStatus.Hide()
+	} else {
+		t.searchStatus.Show()
+	}
 }
 
 func normalizedSearchQueries(raw string) []string {
@@ -298,6 +326,29 @@ func (t *FindOrderTab) refreshResponsiveLayout() {
 	}
 	t.applyResponsiveHeaderScale()
 	t.rebuildGrid(t.activeShipmentID())
+	if t.active {
+		t.syncLEDs()
+	}
+}
+
+func (t *FindOrderTab) syncLEDs() {
+	if t == nil || !t.active || t.led == nil {
+		return
+	}
+	location := t.activeLocation()
+	t.led.ClearLEDs()
+	if location != "" {
+		t.led.HighlightLocations([]string{location}, quantityLEDColor(1))
+	}
+}
+
+func (t *FindOrderTab) activeLocation() string {
+	if t == nil || t.currentIdx < 0 || t.currentIdx >= len(t.entries) {
+		return ""
+	}
+	entry := t.entries[t.currentIdx]
+	detail := t.details[entry.ShipmentID]
+	return firstNonEmpty(detail.Location, t.findGridLocation(entry.GridIndex))
 }
 
 func (t *FindOrderTab) activeShipmentID() string {
@@ -321,5 +372,22 @@ func (t *FindOrderTab) applyResponsiveHeaderScale() {
 			text.Refresh()
 		}
 	}
-	applyHeaderLabelScale(scale, t.customerLabel, t.orderLabel, t.trackingLabel)
+	applyHeaderTitleScale(scale, t.customerLabel)
+	applyHeaderLabelScale(scale, nil, t.detailsLabel)
+}
+
+func formatFindOrderDebugLine(entry FindOrderEntry, tracking string, trackingLoaded bool) string {
+	parts := make([]string, 0, 2)
+	orderID := compactShipmentDisplayID(firstNonEmpty(entry.ExternalID, entry.ShipmentID))
+	if orderID != "" {
+		parts = append(parts, fmt.Sprintf("Order %s", orderID))
+	}
+	tracking = strings.TrimSpace(tracking)
+	if tracking == "" && !trackingLoaded {
+		tracking = "not loaded yet"
+	}
+	if tracking != "" {
+		parts = append(parts, fmt.Sprintf("Tracking %s", tracking))
+	}
+	return strings.Join(parts, " • ")
 }

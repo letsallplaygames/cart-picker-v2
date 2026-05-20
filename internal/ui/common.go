@@ -21,7 +21,7 @@ const idealGridCellWidth float32 = 72
 const idealGridCellHeight float32 = 60
 const minGridCellWidth float32 = 24
 const minGridCellHeight float32 = 26
-const headerCenterMinHeight float32 = 100
+const headerCenterMinHeight float32 = 120
 
 func cartLocations(profile domain.CartProfile) []string {
 	locations := []string{}
@@ -191,11 +191,15 @@ func valueOrSpacer(obj fyne.CanvasObject) fyne.CanvasObject {
 }
 
 func newHeaderText(value string, size float32, bold bool) *canvas.Text {
-	text := canvas.NewText(value, color.NRGBA{R: 0xf5, G: 0xf5, B: 0xf5, A: 0xff})
+	text := canvas.NewText(value, headerTextColor())
 	text.Alignment = fyne.TextAlignCenter
 	text.TextSize = size
 	text.TextStyle = fyne.TextStyle{Bold: bold}
 	return text
+}
+
+func headerTextColor() color.Color {
+	return theme.Color(theme.ColorNameForeground)
 }
 
 func newWrappedHeaderLabel(value string, sizeName fyne.ThemeSizeName, bold bool) *widget.Label {
@@ -208,11 +212,20 @@ func newWrappedHeaderLabel(value string, sizeName fyne.ThemeSizeName, bold bool)
 	return label
 }
 
+func newHeaderTitleText(value string, size float32) *canvas.Text {
+	text := canvas.NewText(value, theme.Color(theme.ColorNamePrimary))
+	text.Alignment = fyne.TextAlignCenter
+	text.TextSize = size
+	text.TextStyle = fyne.TextStyle{Bold: true}
+	return text
+}
+
 func setHeaderText(text *canvas.Text, value string) {
 	if text == nil {
 		return
 	}
 	text.Text = value
+	text.Color = headerTextColor()
 	text.Refresh()
 }
 
@@ -221,6 +234,15 @@ func setHeaderLabelText(label *widget.Label, value string) {
 		return
 	}
 	label.SetText(value)
+}
+
+func setHeaderTitleText(text *canvas.Text, value string) {
+	if text == nil {
+		return
+	}
+	text.Text = value
+	text.Color = theme.Color(theme.ColorNamePrimary)
+	text.Refresh()
 }
 
 func applyHeaderLabelScale(scale float32, primary *widget.Label, secondary ...*widget.Label) {
@@ -245,6 +267,18 @@ func applyHeaderLabelScale(scale float32, primary *widget.Label, secondary ...*w
 			label.SizeName = theme.SizeNameCaptionText
 		}
 		label.Refresh()
+	}
+}
+
+func applyHeaderTitleScale(scale float32, titles ...*canvas.Text) {
+	size := clampFloat32(56*scale, 24, 56)
+	for _, title := range titles {
+		if title == nil {
+			continue
+		}
+		title.TextSize = size
+		title.Color = theme.Color(theme.ColorNamePrimary)
+		title.Refresh()
 	}
 }
 

@@ -390,6 +390,18 @@ func (a *App) onTabChanged(tab *container.TabItem) {
 
 	a.currentTabName = tab.Text
 
+	pickCartActive := tab.Text == "Pick Cart"
+	findOrderActive := tab.Text == "Find Order"
+	if a.shelfLayoutTab != nil {
+		a.shelfLayoutTab.SetActive(pickCartActive)
+	}
+	if a.findOrderTab != nil {
+		a.findOrderTab.SetActive(findOrderActive)
+	}
+	if a.led != nil && !pickCartActive && !findOrderActive {
+		a.led.ClearLEDs()
+	}
+
 	switch tab.Text {
 	case "Pick Cart":
 		if a.shelfLayoutTab != nil {

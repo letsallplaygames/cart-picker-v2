@@ -20,6 +20,7 @@ type ShelfLayoutTab struct {
 	profile          domain.CartProfile
 	led              *led.Controller
 	enableBoxCycling bool
+	active           bool
 	pickItems        []domain.PickItem
 	currentIdx       int
 	cells            []ShelfCell
@@ -28,12 +29,12 @@ type ShelfLayoutTab struct {
 	root             fyne.CanvasObject
 	gridHolder       *fyne.Container
 	quantityText     *canvas.Text
-	nameLabel        *widget.Label
+	nameLabel        *canvas.Text
 	detailsLabel     *widget.Label
 	locationText     *canvas.Text
 	prevBtn          *widget.Button
 	nextBtn          *widget.Button
-	boxNameText      *widget.Label
+	boxNameText      *canvas.Text
 	boxDimsText      *widget.Label
 	prevBoxBtn       *widget.Button
 	nextBoxBtn       *widget.Button
@@ -49,10 +50,10 @@ func NewShelfLayoutTab(profile domain.CartProfile, ledController *led.Controller
 		boxes:            append([]domain.Box(nil), boxing.Boxes...),
 		gridHolder:       container.NewMax(widget.NewLabel("No shipments selected")),
 		quantityText:     newHeaderText("", 46, true),
-		nameLabel:        newWrappedHeaderLabel("No items to pick", theme.SizeNameHeadingText, true),
+		nameLabel:        newHeaderTitleText("No items to pick", 56),
 		detailsLabel:     widget.NewLabel(""),
 		locationText:     newHeaderText("", 46, true),
-		boxNameText:      newWrappedHeaderLabel("No Boxes", theme.SizeNameHeadingText, true),
+		boxNameText:      newHeaderTitleText("No Boxes", 56),
 		boxDimsText:      newWrappedHeaderLabel("", theme.SizeNameText, false),
 	}
 	t.detailsLabel.Alignment = fyne.TextAlignCenter
@@ -101,6 +102,22 @@ func (t *ShelfLayoutTab) Object() fyne.CanvasObject {
 		return widget.NewLabel("")
 	}
 	return t.root
+}
+
+func (t *ShelfLayoutTab) SetActive(active bool) {
+	if t == nil {
+		return
+	}
+	if t.active == active {
+		if active && !t.enableBoxCycling {
+			t.syncLEDs()
+		}
+		return
+	}
+	t.active = active
+	if active && !t.enableBoxCycling {
+		t.syncLEDs()
+	}
 }
 
 func (t *ShelfLayoutTab) UpdateShipments(cells []ShelfCell) {
@@ -157,7 +174,7 @@ func (t *ShelfLayoutTab) updateDisplay() {
 		setHeaderText(t.quantityText, "")
 		setHeaderText(t.locationText, "")
 		if len(t.boxes) == 0 {
-			setHeaderLabelText(t.boxNameText, "No Boxes")
+			setHeaderTitleText(t.boxNameText, "No Boxes")
 			setHeaderLabelText(t.boxDimsText, "")
 			t.prevBoxBtn.Disable()
 			t.nextBoxBtn.Disable()
@@ -166,7 +183,7 @@ func (t *ShelfLayoutTab) updateDisplay() {
 				t.currentBoxIdx = 0
 			}
 			box := t.boxes[t.currentBoxIdx]
-			setHeaderLabelText(t.boxNameText, box.Name)
+			setHeaderTitleText(t.boxNameText, box.Name)
 			setHeaderLabelText(t.boxDimsText, fmt.Sprintf("%.3fft³ • %.3f×%.3f×%.3f in", box.Volume, box.Length, box.Width, box.Height))
 			if t.currentBoxIdx <= 0 {
 				t.prevBoxBtn.Disable()
@@ -185,13 +202,15 @@ func (t *ShelfLayoutTab) updateDisplay() {
 
 	if len(t.pickItems) == 0 || t.currentIdx < 0 || t.currentIdx >= len(t.pickItems) {
 		setHeaderText(t.quantityText, "")
-		setHeaderLabelText(t.nameLabel, "No items to pick")
+		setHeaderTitleText(t.nameLabel, "No items to pick")
 		setHeaderLabelText(t.detailsLabel, "")
 		setHeaderText(t.locationText, "")
 		t.prevBtn.Disable()
 		t.nextBtn.Disable()
 		t.rebuildGrid()
-		t.updateLEDs(nil)
+		if t.active {
+			t.updateLEDs(nil)
+		}
 		return
 	}
 
@@ -202,7 +221,7 @@ func (t *ShelfLayoutTab) updateDisplay() {
 	}
 
 	setHeaderText(t.quantityText, fmt.Sprintf("Qty %d", current.Quantity))
-	setHeaderLabelText(t.nameLabel, current.Name)
+	setHeaderTitleText(t.nameLabel, current.Name)
 	setHeaderLabelText(t.detailsLabel, formatPickDebugLine(current))
 	setHeaderText(t.locationText, fallbackLocation(location))
 	if t.currentIdx <= 0 {
@@ -217,7 +236,9 @@ func (t *ShelfLayoutTab) updateDisplay() {
 	}
 
 	t.rebuildGrid()
-	t.updateLEDs(&current)
+	if t.active {
+		t.updateLEDs(&current)
+	}
 }
 
 func (t *ShelfLayoutTab) rebuildGrid() {
@@ -326,6 +347,21 @@ func (t *ShelfLayoutTab) refreshResponsiveLayout() {
 	}
 	t.applyResponsiveHeaderScale()
 	t.rebuildGrid()
+	if t.active && !t.enableBoxCycling {
+		t.syncLEDs()
+	}
+}
+
+func (t *ShelfLayoutTab) syncLEDs() {
+	if t == nil || t.enableBoxCycling {
+		return
+	}
+	if len(t.pickItems) == 0 || t.currentIdx < 0 || t.currentIdx >= len(t.pickItems) {
+		t.updateLEDs(nil)
+		return
+	}
+	current := t.pickItems[t.currentIdx]
+	t.updateLEDs(&current)
 }
 
 func (t *ShelfLayoutTab) applyResponsiveHeaderScale() {
@@ -341,8 +377,8 @@ func (t *ShelfLayoutTab) applyResponsiveHeaderScale() {
 			text.Refresh()
 		}
 	}
-	applyHeaderLabelScale(scale, t.nameLabel, t.detailsLabel)
-	applyHeaderLabelScale(scale, t.boxNameText, t.boxDimsText)
+	applyHeaderTitleScale(scale, t.nameLabel, t.boxNameText)
+	applyHeaderLabelScale(scale, nil, t.detailsLabel, t.boxDimsText)
 }
 
 func formatDimensions(item domain.PickItem) string {

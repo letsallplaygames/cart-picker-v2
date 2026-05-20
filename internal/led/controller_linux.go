@@ -175,7 +175,8 @@ func clearFrameBuffer(leds []uint32) {
 }
 
 func packColor(color [3]byte) uint32 {
-	// The ws2811 library handles wire-order remapping based on StripeType,
-	// so colors here should stay in standard RGB packing.
-	return uint32(color[0])<<16 | uint32(color[1])<<8 | uint32(color[2])
+	// The deployed carts expect the legacy GRB-packed value ordering.
+	// Even with StripeType configured, the hardware output only matches the
+	// on-screen quantity colors when we swap red/green here before render.
+	return uint32(color[1])<<16 | uint32(color[0])<<8 | uint32(color[2])
 }

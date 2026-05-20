@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PickCart
+Comment=Launch PickCart on the Raspberry Pi
+Exec=/home/pi/bin/run-pickcart.sh
+Path=/home/pi/cart-picker-v2
+Icon=utilities-terminal
+Terminal=true
+Categories=Utility;
+StartupNotify=true

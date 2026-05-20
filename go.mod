@@ -5,6 +5,7 @@ go 1.26.2
 require (
 	fyne.io/fyne/v2 v2.7.4
 	github.com/joho/godotenv v1.5.1
+	github.com/rpi-ws281x/rpi-ws281x-go v1.0.10
 	go.etcd.io/bbolt v1.4.3
 )
 
@@ -31,6 +32,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.17 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/nicksnyder/go-i18n/v2 v2.5.1 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/rymdport/portal v0.4.2 // indirect

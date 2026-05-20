@@ -21,7 +21,7 @@ const idealGridCellWidth float32 = 72
 const idealGridCellHeight float32 = 60
 const minGridCellWidth float32 = 24
 const minGridCellHeight float32 = 26
-const headerCenterMinHeight float32 = 140
+const headerCenterMinHeight float32 = 100
 
 func cartLocations(profile domain.CartProfile) []string {
 	locations := []string{}

@@ -2,41 +2,10 @@
 
 package led
 
-/*
-#cgo CFLAGS: -I/usr/local/include -I/usr/include
-#cgo LDFLAGS: -L/usr/local/lib -L/usr/lib -lws2811
-#include <stdint.h>
-#include <string.h>
-#include "ws2811.h"
-
-static ws2811_t ledstring;
-
-static ws2811_return_t led_init(int count, uint8_t brightness) {
-    memset(&ledstring, 0, sizeof(ledstring));
-    ledstring.freq = 800000;
-    ledstring.dmanum = 10;
-    ledstring.channel[0].gpionum = 18;
-    ledstring.channel[0].invert = 0;
-    ledstring.channel[0].count = count;
-    ledstring.channel[0].strip_type = WS2811_STRIP_GRB;
-    ledstring.channel[0].brightness = brightness;
-    return ws2811_init(&ledstring);
-}
-static void led_set(int index, uint32_t color) {
-    if (index >= 0 && index < ledstring.channel[0].count)
-        ledstring.channel[0].leds[index] = color;
-}
-static void led_clear_all(void) {
-    for (int i = 0; i < ledstring.channel[0].count; i++)
-        ledstring.channel[0].leds[i] = 0;
-}
-static ws2811_return_t led_render(void) { return ws2811_render(&ledstring); }
-static void led_fini(void) { ws2811_fini(&ledstring); }
-*/
-import "C"
-
 import (
 	"log/slog"
+
+	ws2811 "github.com/rpi-ws281x/rpi-ws281x-go"
 
 	"pickcart/internal/config"
 )
@@ -44,6 +13,7 @@ import (
 type Controller struct {
 	ledCount int
 	ledMap   map[string]int
+	device   *ws2811.WS2811
 	ok       bool
 }
 
@@ -64,16 +34,44 @@ func New(cartNumber int, profileName string) *Controller {
 		slog.Info("loaded LED mappings", "count", len(mappings), "required_led_count", requiredCount, "source", path, "column_index", columnIndex, "cart", cartNumber, "profile", profileName)
 	}
 
-	ret := C.led_init(C.int(c.ledCount), C.uint8_t(config.LEDBrightness))
-	if ret != C.WS2811_SUCCESS {
-		slog.Warn("failed to initialize ws2811 LED controller", "error", C.GoString(C.ws2811_get_return_t_str(ret)), "count", c.ledCount, "brightness", config.LEDBrightness, "cart", cartNumber, "profile", profileName)
+	options := ws2811.Option{
+		Frequency: config.LEDFreqHz,
+		DmaNum:    config.LEDDMA,
+		Channels:  makeChannelOptions(c.ledCount),
+	}
+
+	device, err := ws2811.MakeWS2811(&options)
+	if err != nil {
+		slog.Warn("failed to create ws2811 LED controller", "error", err, "count", c.ledCount, "brightness", config.LEDBrightness, "cart", cartNumber, "profile", profileName)
+		return c
+	}
+	if err := device.Init(); err != nil {
+		slog.Warn("failed to initialize ws2811 LED controller", "error", err, "count", c.ledCount, "brightness", config.LEDBrightness, "cart", cartNumber, "profile", profileName)
 		return c
 	}
 
+	c.device = device
 	c.ok = true
 	c.ClearLEDs()
-	slog.Info("initialized ws2811 LED controller", "count", c.ledCount, "brightness", config.LEDBrightness, "cart", cartNumber, "profile", profileName)
+	slog.Info("initialized ws2811 LED controller", "count", c.ledCount, "brightness", config.LEDBrightness, "gpio_pin", config.LEDPin, "dma", config.LEDDMA, "channel", config.LEDChannel, "cart", cartNumber, "profile", profileName)
 	return c
+}
+
+func makeChannelOptions(ledCount int) []ws2811.ChannelOption {
+	channelCount := config.LEDChannel + 1
+	if channelCount < 1 {
+		channelCount = 1
+	}
+
+	channels := make([]ws2811.ChannelOption, channelCount)
+	channels[config.LEDChannel] = ws2811.ChannelOption{
+		GpioPin:    config.LEDPin,
+		Invert:     config.LEDInvert,
+		LedCount:   ledCount,
+		StripeType: ws2811.WS2811StripGRB,
+		Brightness: config.LEDBrightness,
+	}
+	return channels
 }
 
 func (c *Controller) LoadMappings(m map[string]int) {
@@ -95,50 +93,85 @@ func (c *Controller) HighlightLocations(locations []string, color [3]byte) {
 }
 
 func (c *Controller) HighlightLocationColors(locationColors map[string][3]byte) {
-	if c == nil || !c.ok || len(locationColors) == 0 {
+	if c == nil || !c.ok || c.device == nil || len(locationColors) == 0 {
 		return
 	}
 
-	c.ClearLEDs()
+	leds, ok := c.frameBuffer("highlight LEDs")
+	if !ok {
+		return
+	}
+	clearFrameBuffer(leds)
 
 	for location, color := range locationColors {
 		index, ok := c.ledMap[location]
 		if !ok {
 			continue
 		}
-		if index < 0 || index >= c.ledCount {
+		if index < 0 || index >= len(leds) {
 			continue
 		}
-		C.led_set(C.int(index), C.uint32_t(packColor(color)))
+		leds[index] = packColor(color)
 	}
 
-	if ret := C.led_render(); ret != C.WS2811_SUCCESS {
-		slog.Warn("failed to render LED highlights", "error", C.GoString(C.ws2811_get_return_t_str(ret)))
+	if err := c.device.Render(); err != nil {
+		slog.Warn("failed to render LED highlights", "error", err)
 	}
 }
 
 func (c *Controller) ClearLEDs() {
-	if c == nil || !c.ok {
+	if c == nil || !c.ok || c.device == nil {
 		return
 	}
 
-	C.led_clear_all()
-	if ret := C.led_render(); ret != C.WS2811_SUCCESS {
-		slog.Warn("failed to clear LEDs", "error", C.GoString(C.ws2811_get_return_t_str(ret)))
+	leds, ok := c.frameBuffer("clear LEDs")
+	if !ok {
+		return
+	}
+	clearFrameBuffer(leds)
+
+	if err := c.device.Render(); err != nil {
+		slog.Warn("failed to clear LEDs", "error", err)
 	}
 }
 
 func (c *Controller) Cleanup() {
-	if c == nil || !c.ok {
+	if c == nil || !c.ok || c.device == nil {
 		return
 	}
 
-	C.led_clear_all()
-	if ret := C.led_render(); ret != C.WS2811_SUCCESS {
-		slog.Warn("failed to render LED cleanup", "error", C.GoString(C.ws2811_get_return_t_str(ret)))
+	if leds, ok := c.frameBuffer("cleanup LEDs"); ok {
+		clearFrameBuffer(leds)
+		if err := c.device.Render(); err != nil {
+			slog.Warn("failed to render LED cleanup", "error", err)
+		}
 	}
-	C.led_fini()
+
+	c.device.Fini()
+	c.device = nil
 	c.ok = false
+}
+
+func (c *Controller) frameBuffer(action string) ([]uint32, bool) {
+	if c == nil || c.device == nil {
+		return nil, false
+	}
+	if err := c.device.Wait(); err != nil {
+		slog.Warn("failed waiting for LED controller", "error", err, "action", action)
+		return nil, false
+	}
+	leds := c.device.Leds(config.LEDChannel)
+	if len(leds) == 0 {
+		slog.Warn("LED controller returned an empty channel buffer", "channel", config.LEDChannel, "action", action)
+		return nil, false
+	}
+	return leds, true
+}
+
+func clearFrameBuffer(leds []uint32) {
+	for i := range leds {
+		leds[i] = 0
+	}
 }
 
 func packColor(color [3]byte) uint32 {

@@ -115,23 +115,36 @@ func (t *FindOrderTab) SetActive(active bool) {
 	}
 }
 
-func (t *FindOrderTab) UpdateShipments(entries []FindOrderEntry) {
+func (t *FindOrderTab) SetData(entries []FindOrderEntry, details map[string]FindOrderDetail) {
+	if t == nil {
+		return
+	}
 	t.entries = append([]FindOrderEntry(nil), entries...)
 	if len(t.entries) == 0 {
 		t.currentIdx = -1
 	} else if t.currentIdx < 0 || t.currentIdx >= len(t.entries) {
 		t.currentIdx = 0
 	}
-	t.navigateTo(t.currentIdx)
-}
-
-func (t *FindOrderTab) UpdateShipmentDetails(details map[string]FindOrderDetail) {
 	t.details = make(map[string]FindOrderDetail, len(details))
 	for key, value := range details {
 		t.details[key] = value
 	}
 	t.trackingLoaded = len(details) > 0
 	t.navigateTo(t.currentIdx)
+}
+
+func (t *FindOrderTab) UpdateShipments(entries []FindOrderEntry) {
+	if t == nil {
+		return
+	}
+	t.SetData(entries, t.details)
+}
+
+func (t *FindOrderTab) UpdateShipmentDetails(details map[string]FindOrderDetail) {
+	if t == nil {
+		return
+	}
+	t.SetData(t.entries, details)
 }
 
 func (t *FindOrderTab) ShowNext() {

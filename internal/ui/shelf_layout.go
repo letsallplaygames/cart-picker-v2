@@ -120,12 +120,11 @@ func (t *ShelfLayoutTab) SetActive(active bool) {
 	}
 }
 
-func (t *ShelfLayoutTab) UpdateShipments(cells []ShelfCell) {
+func (t *ShelfLayoutTab) SetData(cells []ShelfCell, items []domain.PickItem) {
+	if t == nil {
+		return
+	}
 	t.cells = append([]ShelfCell(nil), cells...)
-	t.updateDisplay()
-}
-
-func (t *ShelfLayoutTab) UpdatePickItems(items []domain.PickItem) {
 	t.pickItems = append([]domain.PickItem(nil), items...)
 	if len(t.pickItems) == 0 {
 		t.currentIdx = -1
@@ -133,6 +132,20 @@ func (t *ShelfLayoutTab) UpdatePickItems(items []domain.PickItem) {
 		t.currentIdx = 0
 	}
 	t.updateDisplay()
+}
+
+func (t *ShelfLayoutTab) UpdateShipments(cells []ShelfCell) {
+	if t == nil {
+		return
+	}
+	t.SetData(cells, t.pickItems)
+}
+
+func (t *ShelfLayoutTab) UpdatePickItems(items []domain.PickItem) {
+	if t == nil {
+		return
+	}
+	t.SetData(t.cells, items)
 }
 
 func (t *ShelfLayoutTab) ShowNext() {

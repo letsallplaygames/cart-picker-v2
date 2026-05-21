@@ -287,7 +287,8 @@ func (t *ShipmentListTab) onBatchChecked(batchID string, checked bool) {
 				if t.onSelChanged != nil {
 					t.onSelChanged()
 				}
-				t.Refresh()
+				t.refreshBatchSelection(batchID)
+				t.statusLabel.SetText(fmt.Sprintf("Loaded shipments for %s", batch.Name))
 			})
 		})
 		return
@@ -306,7 +307,7 @@ func (t *ShipmentListTab) onBatchChecked(batchID string, checked bool) {
 	if t.onSelChanged != nil {
 		t.onSelChanged()
 	}
-	t.Refresh()
+	t.refreshBatchSelection(batchID)
 }
 
 func (t *ShipmentListTab) onShipmentTapped(shipmentID string) {
@@ -338,7 +339,57 @@ func (t *ShipmentListTab) onShipmentChecked(shipmentID string, checked bool) {
 	if t.onSelChanged != nil {
 		t.onSelChanged()
 	}
-	t.Refresh()
+	t.refreshShipmentSelection(shipmentID)
+}
+
+func (t *ShipmentListTab) refreshBatchSelection(batchID string) {
+	if t == nil || t.tree == nil {
+		return
+	}
+	batchNode := widget.TreeNodeID(batchNodePrefix + batchID)
+	if t.tree.IsBranchOpen(batchNode) {
+		t.tree.CloseBranch(batchNode)
+		t.tree.OpenBranch(batchNode)
+	}
+	t.tree.RefreshItem(batchNode)
+
+	batch := t.batchByID(batchID)
+	if batch == nil {
+		return
+	}
+	for _, shipment := range batch.Shipments {
+		if shipment == nil || shipment.ID == "" {
+			continue
+		}
+		t.tree.RefreshItem(widget.TreeNodeID(shipmentNodePrefix + shipment.ID))
+	}
+}
+
+func (t *ShipmentListTab) refreshShipmentSelection(shipmentID string) {
+	if t == nil || t.tree == nil || strings.TrimSpace(shipmentID) == "" {
+		return
+	}
+	t.tree.RefreshItem(widget.TreeNodeID(shipmentNodePrefix + shipmentID))
+	if batchID := t.batchIDForShipment(shipmentID); batchID != "" {
+		t.tree.RefreshItem(widget.TreeNodeID(batchNodePrefix + batchID))
+	}
+}
+
+func (t *ShipmentListTab) batchIDForShipment(shipmentID string) string {
+	if t == nil || t.picker == nil {
+		return ""
+	}
+	for _, batch := range t.picker.Batches {
+		if batch == nil {
+			continue
+		}
+		for _, shipment := range batch.Shipments {
+			if shipment != nil && shipment.ID == shipmentID {
+				return batch.ID
+			}
+		}
+	}
+	return ""
 }
 
 func (t *ShipmentListTab) batchNodeIDs() []widget.TreeNodeID {

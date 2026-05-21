@@ -36,12 +36,16 @@ type App struct {
 	boxesTab        *ShelfLayoutTab
 	findOrderTab    *FindOrderTab
 
-	itemsByShipment map[string][]domain.Item
-	shipmentsByID   map[string]*domain.Shipment
-	selectionEpoch  int64
-	batchLoading    bool
-	statusLabel     *widget.Label
-	currentTabName  string
+	itemsByShipment         map[string][]domain.Item
+	shipmentsByID           map[string]*domain.Shipment
+	selectionEpoch          int64
+	batchLoading            bool
+	statusLabel             *widget.Label
+	currentTabName          string
+	currentShelfCells       []ShelfCell
+	currentPickItems        []domain.PickItem
+	currentFindOrderEntries []FindOrderEntry
+	currentFindOrderDetails map[string]FindOrderDetail
 
 	productDims map[string]dimensions.Dimensions
 }
@@ -51,16 +55,17 @@ func NewApp(cfg *config.AppConfig, profile domain.CartProfile, p *picker.Picker,
 	w := fa.NewWindow("PickCart")
 
 	a := &App{
-		fyneApp:         fa,
-		window:          w,
-		cfg:             cfg,
-		profile:         profile,
-		picker:          p,
-		led:             ledController,
-		itemsByShipment: map[string][]domain.Item{},
-		shipmentsByID:   map[string]*domain.Shipment{},
-		statusLabel:     widget.NewLabel("Ready"),
-		productDims:     map[string]dimensions.Dimensions{},
+		fyneApp:                 fa,
+		window:                  w,
+		cfg:                     cfg,
+		profile:                 profile,
+		picker:                  p,
+		led:                     ledController,
+		itemsByShipment:         map[string][]domain.Item{},
+		shipmentsByID:           map[string]*domain.Shipment{},
+		statusLabel:             widget.NewLabel("Ready"),
+		currentFindOrderDetails: map[string]FindOrderDetail{},
+		productDims:             map[string]dimensions.Dimensions{},
 	}
 
 	a.tabs = a.buildTabs()
@@ -140,28 +145,24 @@ func (a *App) onSelectionChanged() {
 
 	selectedShipments := a.selectedShipmentsOrdered()
 	cells := a.buildShelfCells(selectedShipments)
+	pickItems := a.aggregatePickList()
 	entries, details := a.buildFindOrderState(selectedShipments, cells)
-
-	a.shelfLayoutTab.UpdateShipments(cells)
-	a.boxesTab.UpdateShipments(cells)
-	a.findOrderTab.UpdateShipments(entries)
-	a.findOrderTab.UpdateShipmentDetails(details)
+	a.setDerivedTabState(cells, pickItems, entries, details)
+	a.applyCurrentTabState()
 
 	if len(selectedShipments) == 0 {
-		a.pickListTab.UpdateItems(nil)
-		a.shelfLayoutTab.UpdatePickItems(nil)
-		a.boxesTab.UpdatePickItems(nil)
 		a.statusLabel.SetText("No shipments selected")
 		return
 	}
 
-	shipmentIDs := make([]string, 0, len(selectedShipments))
-	for _, shipment := range selectedShipments {
-		shipmentIDs = append(shipmentIDs, shipment.ID)
+	missingShipmentIDs := a.missingShipmentIDs(selectedShipments)
+	if len(missingShipmentIDs) == 0 {
+		a.statusLabel.SetText(fmt.Sprintf("Selected shipments: %d • Pick items: %d", len(selectedShipments), len(pickItems)))
+		return
 	}
 
-	a.statusLabel.SetText(fmt.Sprintf("Loading items for %d selected shipments...", len(shipmentIDs)))
-	a.picker.LoadShipmentItemsBulk(shipmentIDs, func(results map[string]odoo.BulkResult, err error) {
+	a.statusLabel.SetText(fmt.Sprintf("Loading items for %d selected shipments...", len(missingShipmentIDs)))
+	a.picker.LoadShipmentItemsBulk(missingShipmentIDs, func(results map[string]odoo.BulkResult, err error) {
 		fyne.Do(func() {
 			if epoch != a.selectionEpoch {
 				return
@@ -196,15 +197,76 @@ func (a *App) onBulkResultsLoaded(epoch int64, results map[string]odoo.BulkResul
 	cells := a.buildShelfCells(selectedShipments)
 	pickItems := a.aggregatePickList()
 	entries, details := a.buildFindOrderState(selectedShipments, cells)
-
-	a.pickListTab.UpdateItems(pickItems)
-	a.shelfLayoutTab.UpdateShipments(cells)
-	a.shelfLayoutTab.UpdatePickItems(pickItems)
-	a.boxesTab.UpdateShipments(cells)
-	a.boxesTab.UpdatePickItems(pickItems)
-	a.findOrderTab.UpdateShipments(entries)
-	a.findOrderTab.UpdateShipmentDetails(details)
+	a.setDerivedTabState(cells, pickItems, entries, details)
+	a.applyCurrentTabState()
 	a.statusLabel.SetText(fmt.Sprintf("Selected shipments: %d • Pick items: %d", len(selectedShipments), len(pickItems)))
+}
+
+func (a *App) setDerivedTabState(cells []ShelfCell, pickItems []domain.PickItem, entries []FindOrderEntry, details map[string]FindOrderDetail) {
+	if a == nil {
+		return
+	}
+	a.currentShelfCells = append([]ShelfCell(nil), cells...)
+	a.currentPickItems = append([]domain.PickItem(nil), pickItems...)
+	a.currentFindOrderEntries = append([]FindOrderEntry(nil), entries...)
+	copiedDetails := make(map[string]FindOrderDetail, len(details))
+	for key, value := range details {
+		copiedDetails[key] = value
+	}
+	a.currentFindOrderDetails = copiedDetails
+}
+
+func (a *App) applyCurrentTabState() {
+	if a == nil {
+		return
+	}
+	a.applyTabState(a.currentTabName)
+}
+
+func (a *App) applyTabState(tabName string) {
+	if a == nil {
+		return
+	}
+
+	switch tabName {
+	case "Pick Cart":
+		if a.shelfLayoutTab != nil {
+			a.shelfLayoutTab.SetData(a.currentShelfCells, a.currentPickItems)
+		}
+	case "Pick List":
+		if a.pickListTab != nil {
+			a.pickListTab.UpdateItems(a.currentPickItems)
+		}
+	case "Boxes":
+		if a.boxesTab != nil {
+			a.boxesTab.SetData(a.currentShelfCells, a.currentPickItems)
+		}
+	case "Find Order":
+		if a.findOrderTab != nil {
+			a.findOrderTab.SetData(a.currentFindOrderEntries, a.currentFindOrderDetails)
+		}
+	}
+}
+
+func (a *App) missingShipmentIDs(shipments []*domain.Shipment) []string {
+	if a == nil {
+		return nil
+	}
+
+	missing := make([]string, 0, len(shipments))
+	for _, shipment := range shipments {
+		if shipment == nil || shipment.ID == "" {
+			continue
+		}
+		if shipment.ItemsLoaded {
+			continue
+		}
+		if _, ok := a.itemsByShipment[shipment.ID]; ok {
+			continue
+		}
+		missing = append(missing, shipment.ID)
+	}
+	return missing
 }
 
 func (a *App) aggregatePickList() []domain.PickItem {
@@ -390,6 +452,7 @@ func (a *App) onTabChanged(tab *container.TabItem) {
 	}
 
 	a.currentTabName = tab.Text
+	a.applyTabState(tab.Text)
 
 	pickCartActive := tab.Text == "Pick Cart"
 	findOrderActive := tab.Text == "Find Order"

@@ -505,24 +505,32 @@ func (a *App) onTypedKey(ev *fyne.KeyEvent) {
 		if a.shelfLayoutTab == nil {
 			return
 		}
-		switch ev.Name {
-		case fyne.KeyLeft:
+		switch {
+		case isPreviousNavigationKey(ev.Name):
 			a.shelfLayoutTab.ShowPrevious()
-		case fyne.KeyRight:
+		case isNextNavigationKey(ev.Name):
 			a.shelfLayoutTab.ShowNext()
 		}
 	case "Boxes":
 		if a.boxesTab == nil {
 			return
 		}
-		switch ev.Name {
-		case fyne.KeyLeft:
+		switch {
+		case isPreviousNavigationKey(ev.Name):
 			a.boxesTab.ShowPreviousBox()
-		case fyne.KeyRight:
+		case isNextNavigationKey(ev.Name):
 			a.boxesTab.ShowNextBox()
 		}
 	case "Find Order":
 		if a.findOrderTab == nil {
+			return
+		}
+		switch {
+		case isPreviousNavigationKey(ev.Name):
+			a.findOrderTab.ShowPrevious()
+			return
+		case isNextNavigationKey(ev.Name):
+			a.findOrderTab.ShowNext()
 			return
 		}
 		if a.window != nil && a.window.Canvas().Focused() == a.findOrderTab.searchEntry {
@@ -531,13 +539,15 @@ func (a *App) onTypedKey(ev *fyne.KeyEvent) {
 		if a.findOrderTab.HandleScannerKey(ev) {
 			return
 		}
-		switch ev.Name {
-		case fyne.KeyLeft:
-			a.findOrderTab.ShowPrevious()
-		case fyne.KeyRight:
-			a.findOrderTab.ShowNext()
-		}
 	}
+}
+
+func isPreviousNavigationKey(name fyne.KeyName) bool {
+	return name == fyne.KeyLeft || name == fyne.KeyPageUp
+}
+
+func isNextNavigationKey(name fyne.KeyName) bool {
+	return name == fyne.KeyRight || name == fyne.KeyPageDown
 }
 
 func (a *App) selectedShipmentsOrdered() []*domain.Shipment {

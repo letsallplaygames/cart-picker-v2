@@ -25,6 +25,7 @@ type FindOrderTab struct {
 	details        map[string]FindOrderDetail
 	currentIdx     int
 	trackingBuf    string
+	searchCanvas   fyne.Canvas
 	trackingLoaded bool
 	quantityText   *canvas.Text
 	customerLabel  *canvas.Text
@@ -64,7 +65,7 @@ func NewFindOrderTab(profile domain.CartProfile, ledController *led.Controller) 
 	t.searchStatus.Hide()
 
 	t.searchEntry.SetPlaceHolder("Scan tracking or search customer name, then press Enter")
-	t.searchEntry.OnSubmitted = func(string) { t.processSearchInput() }
+	t.searchEntry.OnSubmitted = func(text string) { t.processSearchInput(text) }
 	t.prevBtn = widget.NewButton("← Previous", t.ShowPrevious)
 	t.prevBtn.Importance = widget.HighImportance
 	t.nextBtn = widget.NewButton("Next →", t.ShowNext)
@@ -204,14 +205,16 @@ func (t *FindOrderTab) navigateTo(idx int) {
 	t.rebuildGrid(entry.ShipmentID)
 }
 
-func (t *FindOrderTab) processSearchInput() {
-	if t == nil || t.searchEntry == nil {
+func (t *FindOrderTab) processSearchInput(submitted string) {
+	if t == nil {
 		return
 	}
 
-	raw := t.searchEntry.Text
-	t.searchEntry.SetText("")
-	t.processSearchValue(raw)
+	t.trackingBuf = ""
+	if t.searchEntry != nil {
+		t.searchEntry.SetText("")
+	}
+	t.processSearchValue(submitted)
 }
 
 func (t *FindOrderTab) processSearchValue(raw string) {
@@ -221,41 +224,57 @@ func (t *FindOrderTab) processSearchValue(raw string) {
 
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
+		t.refocusSearch()
 		return
 	}
 	queries := normalizedSearchQueries(raw)
 	if len(queries) == 0 {
+		t.refocusSearch()
 		return
 	}
 
+	trackingOnly := looksLikeBarcodeScan(raw)
 	for idx, entry := range t.entries {
 		detail := t.details[entry.ShipmentID]
-		tracking := strings.ToLower(firstNonEmpty(detail.TrackingNumber, entry.TrackingNumber))
+		tracking := firstNonEmpty(detail.TrackingNumber, entry.TrackingNumber)
+		for _, query := range queries {
+			if query == "" {
+				continue
+			}
+			if tracking != "" && trackingMatches(tracking, query) {
+				t.setSearchStatus(fmt.Sprintf("Matched tracking %s", raw))
+				t.navigateTo(idx)
+				t.refocusSearch()
+				return
+			}
+		}
+		if trackingOnly {
+			continue
+		}
+
 		customer := strings.ToLower(strings.TrimSpace(detail.CustomerName))
 		orderID := strings.ToLower(strings.TrimSpace(entry.ExternalID))
 		for _, query := range queries {
 			if query == "" {
 				continue
 			}
-			if tracking != "" && strings.Contains(tracking, query) {
-				t.setSearchStatus(fmt.Sprintf("Matched tracking %s", raw))
-				t.navigateTo(idx)
-				return
-			}
 			if customer != "" && strings.Contains(customer, query) {
 				t.setSearchStatus(fmt.Sprintf("Matched customer %s", detail.CustomerName))
 				t.navigateTo(idx)
+				t.refocusSearch()
 				return
 			}
 			if orderID != "" && strings.Contains(orderID, query) {
 				t.setSearchStatus(fmt.Sprintf("Matched order %s", entry.ExternalID))
 				t.navigateTo(idx)
+				t.refocusSearch()
 				return
 			}
 		}
 	}
 
 	t.setSearchStatus(fmt.Sprintf("No shipment found for %s", raw))
+	t.refocusSearch()
 }
 
 func (t *FindOrderTab) HandleScannerRune(r rune) bool {
@@ -266,6 +285,9 @@ func (t *FindOrderTab) HandleScannerRune(r rune) bool {
 		return false
 	}
 	t.trackingBuf += string(r)
+	if t.searchEntry != nil {
+		t.searchEntry.SetText(t.trackingBuf)
+	}
 	return true
 }
 
@@ -277,6 +299,9 @@ func (t *FindOrderTab) HandleScannerKey(ev *fyne.KeyEvent) bool {
 	switch ev.Name {
 	case fyne.KeyEscape:
 		t.trackingBuf = ""
+		if t.searchEntry != nil {
+			t.searchEntry.SetText("")
+		}
 		t.setSearchStatus("Tracking input cleared")
 		return true
 	case fyne.KeyBackspace:
@@ -287,6 +312,9 @@ func (t *FindOrderTab) HandleScannerKey(ev *fyne.KeyEvent) bool {
 		if size > 0 {
 			t.trackingBuf = t.trackingBuf[:len(t.trackingBuf)-size]
 		}
+		if t.searchEntry != nil {
+			t.searchEntry.SetText(t.trackingBuf)
+		}
 		return true
 	case fyne.KeyReturn, fyne.KeyEnter:
 		if strings.TrimSpace(t.trackingBuf) == "" {
@@ -294,6 +322,9 @@ func (t *FindOrderTab) HandleScannerKey(ev *fyne.KeyEvent) bool {
 		}
 		raw := t.trackingBuf
 		t.trackingBuf = ""
+		if t.searchEntry != nil {
+			t.searchEntry.SetText("")
+		}
 		t.processSearchValue(raw)
 		return true
 	default:
@@ -305,11 +336,22 @@ func (t *FindOrderTab) FocusSearch(canvas fyne.Canvas) {
 	if t == nil {
 		return
 	}
-	t.trackingBuf = ""
-	t.setSearchStatus("")
-	if canvas != nil && t.searchEntry != nil {
-		canvas.Focus(t.searchEntry)
+	if canvas != nil {
+		t.searchCanvas = canvas
 	}
+	t.trackingBuf = ""
+	if t.searchEntry != nil {
+		t.searchEntry.SetText("")
+	}
+	t.setSearchStatus("")
+	t.refocusSearch()
+}
+
+func (t *FindOrderTab) refocusSearch() {
+	if t == nil || t.searchCanvas == nil || t.searchEntry == nil {
+		return
+	}
+	t.searchCanvas.Focus(t.searchEntry)
 }
 
 func (t *FindOrderTab) setSearchStatus(value string) {
@@ -323,36 +365,6 @@ func (t *FindOrderTab) setSearchStatus(value string) {
 	} else {
 		t.searchStatus.Show()
 	}
-}
-
-func normalizedSearchQueries(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-
-	queries := []string{strings.ToLower(raw)}
-	if !strings.HasPrefix(strings.ToUpper(raw), "1Z") && len(raw) > 8 {
-		suffix := strings.TrimSpace(raw[8:])
-		if suffix != "" {
-			queries = append(queries, strings.ToLower(suffix))
-		}
-	}
-
-	seen := make(map[string]struct{}, len(queries))
-	unique := make([]string, 0, len(queries))
-	for _, query := range queries {
-		query = strings.TrimSpace(query)
-		if query == "" {
-			continue
-		}
-		if _, ok := seen[query]; ok {
-			continue
-		}
-		seen[query] = struct{}{}
-		unique = append(unique, query)
-	}
-	return unique
 }
 
 func (t *FindOrderTab) findGridLocation(gridIndex int) string {

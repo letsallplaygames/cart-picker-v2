@@ -150,10 +150,12 @@ func (t *FindOrderTab) UpdateShipmentDetails(details map[string]FindOrderDetail)
 
 func (t *FindOrderTab) ShowNext() {
 	t.navigateTo(t.currentIdx + 1)
+	t.prepareScanMode()
 }
 
 func (t *FindOrderTab) ShowPrevious() {
 	t.navigateTo(t.currentIdx - 1)
+	t.prepareScanMode()
 }
 
 func (t *FindOrderTab) navigateTo(idx int) {
@@ -209,12 +211,7 @@ func (t *FindOrderTab) processSearchInput(submitted string) {
 	if t == nil {
 		return
 	}
-
-	t.trackingBuf = ""
-	if t.searchEntry != nil {
-		t.searchEntry.SetText("")
-	}
-	t.processSearchValue(submitted)
+	t.processSearchValue(strings.TrimSpace(submitted))
 }
 
 func (t *FindOrderTab) processSearchValue(raw string) {
@@ -222,14 +219,14 @@ func (t *FindOrderTab) processSearchValue(raw string) {
 		return
 	}
 
+	defer t.prepareScanMode()
+
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		t.refocusSearch()
 		return
 	}
 	queries := normalizedSearchQueries(raw)
 	if len(queries) == 0 {
-		t.refocusSearch()
 		return
 	}
 
@@ -244,7 +241,6 @@ func (t *FindOrderTab) processSearchValue(raw string) {
 			if tracking != "" && trackingMatches(tracking, query) {
 				t.setSearchStatus(fmt.Sprintf("Matched tracking %s", raw))
 				t.navigateTo(idx)
-				t.refocusSearch()
 				return
 			}
 		}
@@ -261,20 +257,17 @@ func (t *FindOrderTab) processSearchValue(raw string) {
 			if customer != "" && strings.Contains(customer, query) {
 				t.setSearchStatus(fmt.Sprintf("Matched customer %s", detail.CustomerName))
 				t.navigateTo(idx)
-				t.refocusSearch()
 				return
 			}
 			if orderID != "" && strings.Contains(orderID, query) {
 				t.setSearchStatus(fmt.Sprintf("Matched order %s", entry.ExternalID))
 				t.navigateTo(idx)
-				t.refocusSearch()
 				return
 			}
 		}
 	}
 
 	t.setSearchStatus(fmt.Sprintf("No shipment found for %s", raw))
-	t.refocusSearch()
 }
 
 func (t *FindOrderTab) HandleScannerRune(r rune) bool {
@@ -284,10 +277,11 @@ func (t *FindOrderTab) HandleScannerRune(r rune) bool {
 	if !unicode.IsPrint(r) {
 		return false
 	}
-	t.trackingBuf += string(r)
-	if t.searchEntry != nil {
-		t.searchEntry.SetText(t.trackingBuf)
+	if t.trackingBuf == "" {
+		t.clearSearchDisplay()
 	}
+	t.trackingBuf += string(r)
+	t.syncSearchDisplay()
 	return true
 }
 
@@ -298,10 +292,7 @@ func (t *FindOrderTab) HandleScannerKey(ev *fyne.KeyEvent) bool {
 
 	switch ev.Name {
 	case fyne.KeyEscape:
-		t.trackingBuf = ""
-		if t.searchEntry != nil {
-			t.searchEntry.SetText("")
-		}
+		t.prepareScanMode()
 		t.setSearchStatus("Tracking input cleared")
 		return true
 	case fyne.KeyBackspace:
@@ -312,24 +303,42 @@ func (t *FindOrderTab) HandleScannerKey(ev *fyne.KeyEvent) bool {
 		if size > 0 {
 			t.trackingBuf = t.trackingBuf[:len(t.trackingBuf)-size]
 		}
-		if t.searchEntry != nil {
-			t.searchEntry.SetText(t.trackingBuf)
-		}
+		t.syncSearchDisplay()
 		return true
 	case fyne.KeyReturn, fyne.KeyEnter:
-		if strings.TrimSpace(t.trackingBuf) == "" {
+		raw := t.takeScanInput()
+		if raw == "" {
 			return false
-		}
-		raw := t.trackingBuf
-		t.trackingBuf = ""
-		if t.searchEntry != nil {
-			t.searchEntry.SetText("")
 		}
 		t.processSearchValue(raw)
 		return true
 	default:
 		return false
 	}
+}
+
+func (t *FindOrderTab) takeScanInput() string {
+	raw := strings.TrimSpace(t.trackingBuf)
+	t.trackingBuf = ""
+	if raw == "" && t.searchEntry != nil {
+		raw = strings.TrimSpace(t.searchEntry.Text)
+	}
+	t.clearSearchDisplay()
+	return raw
+}
+
+func (t *FindOrderTab) clearSearchDisplay() {
+	if t == nil || t.searchEntry == nil {
+		return
+	}
+	t.searchEntry.SetText("")
+}
+
+func (t *FindOrderTab) syncSearchDisplay() {
+	if t == nil || t.searchEntry == nil {
+		return
+	}
+	t.searchEntry.SetText(t.trackingBuf)
 }
 
 func (t *FindOrderTab) FocusSearch(canvas fyne.Canvas) {
@@ -339,19 +348,26 @@ func (t *FindOrderTab) FocusSearch(canvas fyne.Canvas) {
 	if canvas != nil {
 		t.searchCanvas = canvas
 	}
-	t.trackingBuf = ""
-	if t.searchEntry != nil {
-		t.searchEntry.SetText("")
-	}
 	t.setSearchStatus("")
-	t.refocusSearch()
+	t.prepareScanMode()
 }
 
-func (t *FindOrderTab) refocusSearch() {
-	if t == nil || t.searchCanvas == nil || t.searchEntry == nil {
+func (t *FindOrderTab) prepareScanMode() {
+	if t == nil {
 		return
 	}
-	t.searchCanvas.Focus(t.searchEntry)
+	t.trackingBuf = ""
+	t.clearSearchDisplay()
+	if t.searchCanvas != nil {
+		t.searchCanvas.Unfocus()
+	}
+}
+
+func (t *FindOrderTab) isManualSearchFocused() bool {
+	if t == nil || t.searchCanvas == nil || t.searchEntry == nil {
+		return false
+	}
+	return t.searchCanvas.Focused() == t.searchEntry
 }
 
 func (t *FindOrderTab) setSearchStatus(value string) {

@@ -3,6 +3,8 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	"fyne.io/fyne/v2/widget"
 )
 
 func TestNormalizedSearchQueriesUPS(t *testing.T) {
@@ -96,5 +98,34 @@ func TestLooksLikeBarcodeScan(t *testing.T) {
 	}
 	if !looksLikeBarcodeScan("9240251452585145236258749512003264") {
 		t.Fatal("FedEx scan should look like barcode")
+	}
+}
+
+func TestTakeScanInputPrefersBuffer(t *testing.T) {
+	tab := &FindOrderTab{
+		trackingBuf: "1Z999AA10123456784",
+		searchEntry: widget.NewEntry(),
+	}
+	tab.searchEntry.SetText("stale-label-text")
+
+	got := tab.takeScanInput()
+	if got != "1Z999AA10123456784" {
+		t.Fatalf("takeScanInput() = %q, want buffer value", got)
+	}
+	if tab.searchEntry.Text != "" {
+		t.Fatalf("search entry = %q, want cleared", tab.searchEntry.Text)
+	}
+	if tab.trackingBuf != "" {
+		t.Fatalf("trackingBuf = %q, want cleared", tab.trackingBuf)
+	}
+}
+
+func TestTakeScanInputFallsBackToEntry(t *testing.T) {
+	tab := &FindOrderTab{searchEntry: widget.NewEntry()}
+	tab.searchEntry.SetText("9400111899223344556677")
+
+	got := tab.takeScanInput()
+	if got != "9400111899223344556677" {
+		t.Fatalf("takeScanInput() = %q, want entry fallback", got)
 	}
 }

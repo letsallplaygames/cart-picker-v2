@@ -489,7 +489,7 @@ func (a *App) onTypedRune(r rune) {
 	if a == nil || a.currentTabName != "Find Order" || a.findOrderTab == nil || a.window == nil {
 		return
 	}
-	if a.window.Canvas().Focused() == a.findOrderTab.searchEntry {
+	if a.findOrderTab.isManualSearchFocused() {
 		return
 	}
 	a.findOrderTab.HandleScannerRune(r)
@@ -533,10 +533,10 @@ func (a *App) onTypedKey(ev *fyne.KeyEvent) {
 			a.findOrderTab.ShowNext()
 			return
 		}
-		if a.window != nil && a.window.Canvas().Focused() == a.findOrderTab.searchEntry {
+		if a.findOrderTab.HandleScannerKey(ev) {
 			return
 		}
-		if a.findOrderTab.HandleScannerKey(ev) {
+		if a.window != nil && a.findOrderTab.isManualSearchFocused() {
 			return
 		}
 	}

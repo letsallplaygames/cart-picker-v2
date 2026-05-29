@@ -26,6 +26,8 @@ const (
 	apiCacheTTLHours    = 24
 	inventoryCacheTTL   = 4 * time.Hour
 	inventoryCacheKey   = "odoo.inventory.sku_locations"
+	lenexaQtyCacheKey   = "odoo.inventory.lenexa_qty_by_sku"
+	lenexaLocationPrefix = "LNX/"
 )
 
 type Config struct {
@@ -47,10 +49,9 @@ type Client struct {
 }
 
 type productFieldSelection struct {
-	qtyAvailableField string
-	lengthField       string
-	widthField        string
-	heightField       string
+	lengthField string
+	widthField  string
+	heightField string
 }
 
 type HTTPError struct {
@@ -271,6 +272,94 @@ func (c *Client) GetInventory() (map[string]string, error) {
 	return inventory, nil
 }
 
+func isLenexaWarehouseLocation(completeName string) bool {
+	name := strings.ToUpper(strings.TrimSpace(completeName))
+	return strings.HasPrefix(name, lenexaLocationPrefix)
+}
+
+func (c *Client) GetLenexaQtyBySKU() (map[string]float64, error) {
+	if cached, ok, err := c.loadLenexaQtyCache(inventoryCacheTTL); err == nil && ok {
+		return cached, nil
+	}
+
+	rows, err := c.SearchRead(
+		"stock.quant",
+		[]any{
+			[]any{"location_id.usage", "=", "internal"},
+			[]any{"quantity", ">", 0},
+		},
+		[]string{"product_id", "location_id", "quantity"},
+		10000,
+		0,
+		"",
+		false,
+	)
+	if err != nil {
+		if stale, staleErr := c.loadLenexaQtyCacheStale(); staleErr == nil && len(stale) > 0 {
+			slog.Warn("using stale Lenexa qty cache after Odoo inventory fetch failed", "error", err)
+			return stale, nil
+		}
+		return nil, err
+	}
+
+	locationIDs := make(map[int]struct{})
+	for _, row := range rows {
+		locationID, _ := c.ParseMany2One(row["location_id"])
+		if locationID > 0 {
+			locationIDs[locationID] = struct{}{}
+		}
+	}
+
+	locationNames := make(map[int]string, len(locationIDs))
+	if len(locationIDs) > 0 {
+		ids := make([]int, 0, len(locationIDs))
+		for locationID := range locationIDs {
+			ids = append(ids, locationID)
+		}
+		sort.Ints(ids)
+
+		locationRows, err := c.Read("stock.location", ids, []string{"id", "complete_name"}, false)
+		if err != nil {
+			if stale, staleErr := c.loadLenexaQtyCacheStale(); staleErr == nil && len(stale) > 0 {
+				slog.Warn("using stale Lenexa qty cache after Odoo location lookup failed", "error", err)
+				return stale, nil
+			}
+			return nil, err
+		}
+
+		for _, row := range locationRows {
+			locationID := intFromAny(row["id"])
+			if locationID <= 0 {
+				continue
+			}
+			locationNames[locationID] = stringFromAny(row["complete_name"])
+		}
+	}
+
+	qtyBySKU := make(map[string]float64, len(rows))
+	for _, row := range rows {
+		locationID, locationLabel := c.ParseMany2One(row["location_id"])
+		completeName := firstNonEmpty(locationNames[locationID], locationLabel)
+		if !isLenexaWarehouseLocation(completeName) {
+			continue
+		}
+
+		_, productLabel := c.ParseMany2One(row["product_id"])
+		sku := c.ParseSKUFromLabel(productLabel)
+		if sku == "" {
+			continue
+		}
+
+		qtyBySKU[sku] += floatFromAny(row["quantity"])
+	}
+
+	if err := c.saveLenexaQtyCache(qtyBySKU); err != nil {
+		slog.Warn("failed to save Lenexa qty cache", "error", err)
+	}
+
+	return qtyBySKU, nil
+}
+
 func (c *Client) GetBatches(limit int, forceRefresh bool) ([]map[string]any, error) {
 	rows, err := c.SearchRead(
 		"stock.picking.batch",
@@ -437,8 +526,14 @@ func (c *Client) GetBatchShipmentItemsBulk(shipmentIDs []string, forceRefresh bo
 		movesByShipment[shipmentKey] = append(movesByShipment[shipmentKey], move)
 	}
 
+	lenexaQtyBySKU, lenexaQtyErr := c.GetLenexaQtyBySKU()
+	if lenexaQtyErr != nil {
+		slog.Warn("failed to load Lenexa warehouse quantities; available counts will be hidden", "error", lenexaQtyErr)
+		lenexaQtyBySKU = nil
+	}
+
 	for shipmentID, shipmentMoves := range movesByShipment {
-		results[shipmentID] = c.buildItemsFromMoves(shipmentMoves, productMap, skuLocations, fieldSelection)
+		results[shipmentID] = c.buildItemsFromMoves(shipmentMoves, productMap, skuLocations, fieldSelection, lenexaQtyBySKU)
 	}
 
 	return results, nil
@@ -552,7 +647,7 @@ func (c *Client) postJSON2(model, method string, payload map[string]any, forceRe
 	return nil, fmt.Errorf("odoo request failed after retries")
 }
 
-func (c *Client) buildItemsFromMoves(moves []map[string]any, productMap map[int]map[string]any, skuLocations map[string]string, fieldSelection productFieldSelection) BulkResult {
+func (c *Client) buildItemsFromMoves(moves []map[string]any, productMap map[int]map[string]any, skuLocations map[string]string, fieldSelection productFieldSelection, lenexaQtyBySKU map[string]float64) BulkResult {
 	result := BulkResult{Items: make([]domain.Item, 0, len(moves))}
 
 	for _, move := range moves {
@@ -591,10 +686,7 @@ func (c *Client) buildItemsFromMoves(moves []map[string]any, productMap map[int]
 			}
 		}
 
-		qtyAvailable := -1.0
-		if strings.TrimSpace(fieldSelection.qtyAvailableField) != "" {
-			qtyAvailable = floatFromSelectedField(product, fieldSelection.qtyAvailableField)
-		}
+		qtyAvailable := lenexaQtyAvailable(sku, lenexaQtyBySKU)
 
 		result.TotalWeightOz += lineWeightOz
 		result.Items = append(result.Items, domain.Item{
@@ -631,10 +723,6 @@ func (c *Client) detectProductFieldSelection(forceRefresh bool) (productFieldSel
 
 	selection := productFieldSelection{}
 	used := map[string]struct{}{}
-	selection.qtyAvailableField = selectNumericField(fields, []string{"free_qty", "qty_available", "virtual_available"}, nil, used)
-	if selection.qtyAvailableField != "" {
-		used[selection.qtyAvailableField] = struct{}{}
-	}
 	selection.lengthField = selectNumericField(fields, []string{"length", "product_length", "x_studio_length"}, []string{"length"}, used)
 	if selection.lengthField != "" {
 		used[selection.lengthField] = struct{}{}
@@ -650,7 +738,7 @@ func (c *Client) detectProductFieldSelection(forceRefresh bool) (productFieldSel
 
 func appendProductReadFields(base []string, selection productFieldSelection) []string {
 	fields := append([]string(nil), base...)
-	for _, field := range []string{selection.qtyAvailableField, selection.lengthField, selection.widthField, selection.heightField} {
+	for _, field := range []string{selection.lengthField, selection.widthField, selection.heightField} {
 		field = strings.TrimSpace(field)
 		if field == "" {
 			continue
@@ -1034,6 +1122,57 @@ func (c *Client) saveInventoryCache(locs map[string]string) error {
 	return c.cfg.Cache.Put(inventoryCacheKey, nil, locs)
 }
 
+func lenexaQtyAvailable(sku string, lenexaQtyBySKU map[string]float64) float64 {
+	sku = strings.TrimSpace(sku)
+	if sku == "" || lenexaQtyBySKU == nil {
+		return -1
+	}
+	qty, ok := lenexaQtyBySKU[sku]
+	if !ok {
+		return 0
+	}
+	return qty
+}
+
+func (c *Client) loadLenexaQtyCache(ttl time.Duration) (map[string]float64, bool, error) {
+	if c == nil || !c.cfg.UseCache || c.cfg.Cache == nil {
+		return nil, false, nil
+	}
+
+	cached, storedAt, ok, err := c.cfg.Cache.GetWithTimestamp(lenexaQtyCacheKey, nil)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	if time.Since(storedAt) > ttl {
+		return nil, false, nil
+	}
+
+	qty, err := floatMapFromAny(cached)
+	if err != nil {
+		return nil, false, err
+	}
+	return qty, true, nil
+}
+
+func (c *Client) loadLenexaQtyCacheStale() (map[string]float64, error) {
+	if c == nil || !c.cfg.UseCache || c.cfg.Cache == nil {
+		return nil, nil
+	}
+
+	cached, _, ok, err := c.cfg.Cache.GetWithTimestamp(lenexaQtyCacheKey, nil)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return floatMapFromAny(cached)
+}
+
+func (c *Client) saveLenexaQtyCache(qty map[string]float64) error {
+	if c == nil || !c.cfg.UseCache || c.cfg.Cache == nil {
+		return nil
+	}
+	return c.cfg.Cache.Put(lenexaQtyCacheKey, nil, qty)
+}
+
 func stringMapFromAny(value any) (map[string]string, error) {
 	switch v := value.(type) {
 	case nil:
@@ -1052,5 +1191,26 @@ func stringMapFromAny(value any) (map[string]string, error) {
 		return copy, nil
 	default:
 		return nil, fmt.Errorf("unexpected inventory cache payload type %T", value)
+	}
+}
+
+func floatMapFromAny(value any) (map[string]float64, error) {
+	switch v := value.(type) {
+	case nil:
+		return map[string]float64{}, nil
+	case map[string]float64:
+		copy := make(map[string]float64, len(v))
+		for key, entry := range v {
+			copy[key] = entry
+		}
+		return copy, nil
+	case map[string]any:
+		copy := make(map[string]float64, len(v))
+		for key, entry := range v {
+			copy[key] = floatFromAny(entry)
+		}
+		return copy, nil
+	default:
+		return nil, fmt.Errorf("unexpected Lenexa qty cache payload type %T", value)
 	}
 }

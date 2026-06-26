@@ -19,16 +19,21 @@ import (
 )
 
 const (
-	maxRetries          = 5
-	backoffBase         = 1 * time.Second
-	backoffJitter       = 0.25
-	lenexaPickingTypeID = 446
-	apiCacheTTLHours    = 24
-	inventoryCacheTTL   = 4 * time.Hour
-	inventoryCacheKey   = "odoo.inventory.sku_locations"
-	lenexaQtyCacheKey   = "odoo.inventory.lenexa_qty_by_sku"
-	lenexaLocationPrefix = "LNX/"
+	maxRetries            = 5
+	backoffBase           = 1 * time.Second
+	backoffJitter         = 0.25
+	lenexaPickingTypeID   = 446
+	lenexaKSPickingTypeID = 670
+	apiCacheTTLHours      = 24
+	inventoryCacheTTL     = 4 * time.Hour
+	inventoryCacheKey     = "odoo.inventory.sku_locations"
+	lenexaQtyCacheKey     = "odoo.inventory.lenexa_qty_by_sku"
+	lenexaLocationPrefix  = "LNX/"
 )
+
+func lenexaPickingTypeIDs() []any {
+	return []any{lenexaPickingTypeID, lenexaKSPickingTypeID}
+}
 
 type Config struct {
 	APIKey   string
@@ -364,7 +369,7 @@ func (c *Client) GetBatches(limit int, forceRefresh bool) ([]map[string]any, err
 	rows, err := c.SearchRead(
 		"stock.picking.batch",
 		[]any{
-			[]any{"picking_type_id", "=", lenexaPickingTypeID},
+			[]any{"picking_type_id", "in", lenexaPickingTypeIDs()},
 			[]any{"state", "in", []any{"in_progress", "done"}},
 		},
 		[]string{"id", "name", "create_date", "state", "picking_ids"},
@@ -395,7 +400,7 @@ func (c *Client) GetBatchShipments(batchID int, forceRefresh bool) ([]map[string
 			"stock.picking",
 			[]any{
 				[]any{"batch_id", "=", batchID},
-				[]any{"picking_type_id", "=", lenexaPickingTypeID},
+				[]any{"picking_type_id", "in", lenexaPickingTypeIDs()},
 				[]any{"state", "in", []any{"assigned", "done"}},
 			},
 			stockPickingFields(),

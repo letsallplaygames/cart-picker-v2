@@ -27,6 +27,7 @@ type ShipmentListTab struct {
 	loadBtn         *widget.Button
 	forceRefreshBtn *widget.Button
 	batchCountEntry *widget.Entry
+	batchSearchEntry *widget.Entry
 	statusLabel     *widget.Label
 	root            fyne.CanvasObject
 }
@@ -155,6 +156,13 @@ func NewShipmentListTab(p *picker.Picker, onSelChanged func()) *ShipmentListTab 
 	t.batchCountEntry.SetText(fmt.Sprintf("%d", initialBatchLoadLimit))
 	t.batchCountEntry.SetMinRowsVisible(1)
 
+	t.batchSearchEntry = widget.NewEntry()
+	t.batchSearchEntry.SetPlaceHolder("Filter by batch name")
+	t.batchSearchEntry.OnChanged = func(_ string) {
+		t.tree.Refresh()
+		t.tree.OpenBranch(rootNodeID)
+	}
+
 	t.loadBtn = widget.NewButton("Load", func() {
 		t.loadBatches(false)
 	})
@@ -175,7 +183,8 @@ func NewShipmentListTab(p *picker.Picker, onSelChanged func()) *ShipmentListTab 
 		t.forceRefreshBtn,
 		statusRow,
 	)
-	t.root = container.NewBorder(container.NewVBox(controls, headers), nil, nil, nil, t.tree)
+	searchRow := container.NewBorder(nil, nil, widget.NewLabel("Search:"), nil, t.batchSearchEntry)
+	t.root = container.NewBorder(container.NewVBox(searchRow, controls, headers), nil, nil, nil, t.tree)
 	return t
 }
 
@@ -396,14 +405,33 @@ func (t *ShipmentListTab) batchNodeIDs() []widget.TreeNodeID {
 	if t == nil || t.picker == nil {
 		return nil
 	}
+	query := t.batchSearchQuery()
 	ids := make([]widget.TreeNodeID, 0, len(t.picker.Batches))
 	for _, batch := range t.picker.Batches {
 		if batch == nil || batch.ID == "" {
 			continue
 		}
+		if !batchMatchesSearch(batch.Name, query) {
+			continue
+		}
 		ids = append(ids, widget.TreeNodeID(batchNodePrefix+batch.ID))
 	}
 	return ids
+}
+
+func (t *ShipmentListTab) batchSearchQuery() string {
+	if t == nil || t.batchSearchEntry == nil {
+		return ""
+	}
+	return strings.TrimSpace(t.batchSearchEntry.Text)
+}
+
+func batchMatchesSearch(batchName, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(batchName), query)
 }
 
 func (t *ShipmentListTab) batchByID(batchID string) *domain.Batch {

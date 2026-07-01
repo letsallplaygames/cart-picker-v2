@@ -3,14 +3,14 @@ package odoo
 import "testing"
 
 func TestLenexaPickingTypeIDs(t *testing.T) {
+	want := []int{lenexaPickingTypeID, lenexaKSPickingTypeID, lenexaPREPickingTypeID}
 	ids := lenexaPickingTypeIDs()
-	if len(ids) != 2 {
-		t.Fatalf("lenexaPickingTypeIDs() len = %d, want 2", len(ids))
+	if len(ids) != len(want) {
+		t.Fatalf("lenexaPickingTypeIDs() len = %d, want %d", len(ids), len(want))
 	}
-	if ids[0] != lenexaPickingTypeID {
-		t.Fatalf("ids[0] = %v, want %d", ids[0], lenexaPickingTypeID)
-	}
-	if ids[1] != lenexaKSPickingTypeID {
-		t.Fatalf("ids[1] = %v, want %d", ids[1], lenexaKSPickingTypeID)
+	for i, expected := range want {
+		if ids[i] != expected {
+			t.Fatalf("ids[%d] = %v, want %d", i, ids[i], expected)
+		}
 	}
 }

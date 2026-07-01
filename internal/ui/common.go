@@ -14,7 +14,7 @@ import (
 	"pickcart/internal/domain"
 )
 
-const initialBatchLoadLimit = 10
+const initialBatchLoadLimit = 100
 const pickNavButtonWidth float32 = 132
 const pickNavButtonHeight float32 = 40
 const idealGridCellWidth float32 = 72

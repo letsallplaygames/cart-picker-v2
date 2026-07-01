@@ -19,20 +19,21 @@ import (
 )
 
 const (
-	maxRetries            = 5
-	backoffBase           = 1 * time.Second
-	backoffJitter         = 0.25
-	lenexaPickingTypeID   = 446
-	lenexaKSPickingTypeID = 670
-	apiCacheTTLHours      = 24
-	inventoryCacheTTL     = 4 * time.Hour
-	inventoryCacheKey     = "odoo.inventory.sku_locations"
-	lenexaQtyCacheKey     = "odoo.inventory.lenexa_qty_by_sku"
-	lenexaLocationPrefix  = "LNX/"
+	maxRetries             = 5
+	backoffBase            = 1 * time.Second
+	backoffJitter          = 0.25
+	lenexaPickingTypeID    = 446
+	lenexaKSPickingTypeID  = 670
+	lenexaPREPickingTypeID = 671
+	apiCacheTTLHours       = 24
+	inventoryCacheTTL      = 4 * time.Hour
+	inventoryCacheKey      = "odoo.inventory.sku_locations"
+	lenexaQtyCacheKey      = "odoo.inventory.lenexa_qty_by_sku"
+	lenexaLocationPrefix   = "LNX/"
 )
 
 func lenexaPickingTypeIDs() []any {
-	return []any{lenexaPickingTypeID, lenexaKSPickingTypeID}
+	return []any{lenexaPickingTypeID, lenexaKSPickingTypeID, lenexaPREPickingTypeID}
 }
 
 type Config struct {

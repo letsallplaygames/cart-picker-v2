@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"image/color"
 	"strings"
 
@@ -31,6 +32,7 @@ type ShelfLayoutTab struct {
 	quantityText     *canvas.Text
 	nameLabel        *canvas.Text
 	detailsLabel     *widget.Label
+	itemImage        *canvas.Image
 	locationText     *canvas.Text
 	prevBtn          *widget.Button
 	nextBtn          *widget.Button
@@ -62,6 +64,10 @@ func NewShelfLayoutTab(profile domain.CartProfile, ledController *led.Controller
 	t.detailsLabel.Importance = widget.HighImportance
 	t.detailsLabel.SizeName = theme.SizeNameText
 
+	t.itemImage = &canvas.Image{FillMode: canvas.ImageFillContain}
+	t.itemImage.SetMinSize(fyne.NewSize(pickItemImageSize, pickItemImageSize))
+	t.itemImage.Hide()
+
 	t.prevBtn = widget.NewButton("← Previous", t.ShowPrevious)
 	t.prevBtn.Importance = widget.HighImportance
 	t.nextBtn = widget.NewButton("Next →", t.ShowNext)
@@ -87,8 +93,10 @@ func NewShelfLayoutTab(profile domain.CartProfile, ledController *led.Controller
 			t.quantityText,
 			t.nextBtn,
 			t.locationText,
-			t.nameLabel,
-			t.detailsLabel,
+			container.NewCenter(container.NewHBox(
+				t.itemImage,
+				container.NewVBox(t.nameLabel, t.detailsLabel),
+			)),
 		)
 	}
 
@@ -217,6 +225,7 @@ func (t *ShelfLayoutTab) updateDisplay() {
 		setHeaderText(t.quantityText, "")
 		setHeaderTitleText(t.nameLabel, "No items to pick")
 		setHeaderLabelText(t.detailsLabel, "")
+		t.setItemImage(nil)
 		setHeaderText(t.locationText, "")
 		t.prevBtn.Disable()
 		t.nextBtn.Disable()
@@ -236,6 +245,7 @@ func (t *ShelfLayoutTab) updateDisplay() {
 	setHeaderText(t.quantityText, fmt.Sprintf("Qty %d", current.Quantity))
 	setHeaderTitleText(t.nameLabel, current.Name)
 	setHeaderLabelText(t.detailsLabel, formatPickDebugLine(current))
+	t.setItemImage(decodeProductImage(current))
 	setHeaderText(t.locationText, fallbackLocation(location))
 	if t.currentIdx <= 0 {
 		t.prevBtn.Disable()
@@ -252,6 +262,21 @@ func (t *ShelfLayoutTab) updateDisplay() {
 	if t.active {
 		t.updateLEDs(&current)
 	}
+}
+
+// setItemImage shows the product photo for the current pick item, collapsing
+// the thumbnail entirely when the product has no usable image in Odoo.
+func (t *ShelfLayoutTab) setItemImage(img image.Image) {
+	if t == nil || t.itemImage == nil {
+		return
+	}
+	t.itemImage.Image = img
+	if img == nil {
+		t.itemImage.Hide()
+	} else {
+		t.itemImage.Show()
+	}
+	t.itemImage.Refresh()
 }
 
 func (t *ShelfLayoutTab) rebuildGrid() {
@@ -389,6 +414,10 @@ func (t *ShelfLayoutTab) applyResponsiveHeaderScale() {
 		if text != nil {
 			text.Refresh()
 		}
+	}
+	if t.itemImage != nil {
+		size := pickItemImageSize * scale
+		t.itemImage.SetMinSize(fyne.NewSize(size, size))
 	}
 	applyHeaderTitleScale(scale, t.nameLabel, t.boxNameText)
 	applyHeaderLabelScale(scale, nil, t.detailsLabel, t.boxDimsText)

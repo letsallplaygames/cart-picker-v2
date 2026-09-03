@@ -2,6 +2,7 @@ package odoo
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,6 +59,7 @@ type productFieldSelection struct {
 	lengthField string
 	widthField  string
 	heightField string
+	imageField  string
 }
 
 type HTTPError struct {
@@ -706,6 +708,7 @@ func (c *Client) buildItemsFromMoves(moves []map[string]any, productMap map[int]
 			Width:        floatFromSelectedField(product, fieldSelection.widthField),
 			Length:       floatFromSelectedField(product, fieldSelection.lengthField),
 			QtyAvailable: qtyAvailable,
+			Image:        imageFromSelectedField(product, fieldSelection.imageField),
 		})
 	}
 
@@ -738,13 +741,30 @@ func (c *Client) detectProductFieldSelection(forceRefresh bool) (productFieldSel
 		used[selection.widthField] = struct{}{}
 	}
 	selection.heightField = selectNumericField(fields, []string{"height", "product_height", "x_studio_height"}, []string{"height"}, used)
+	selection.imageField = selectImageField(fields)
 
 	return selection, nil
 }
 
+// selectImageField picks the smallest standard Odoo product thumbnail available.
+// Returns "" when the database exposes no binary image field, so item loading
+// keeps working against customized Odoo instances.
+func selectImageField(fields map[string]any) string {
+	for _, name := range []string{"image_256", "image_128", "image_512", "image_1920"} {
+		meta, ok := fields[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(strings.ToLower(stringFromAny(meta["type"]))) == "binary" {
+			return name
+		}
+	}
+	return ""
+}
+
 func appendProductReadFields(base []string, selection productFieldSelection) []string {
 	fields := append([]string(nil), base...)
-	for _, field := range []string{selection.lengthField, selection.widthField, selection.heightField} {
+	for _, field := range []string{selection.lengthField, selection.widthField, selection.heightField, selection.imageField} {
 		field = strings.TrimSpace(field)
 		if field == "" {
 			continue
@@ -834,6 +854,23 @@ func floatFromSelectedField(values map[string]any, fieldName string) float64 {
 		return 0
 	}
 	return floatFromAny(values[fieldName])
+}
+
+func imageFromSelectedField(values map[string]any, fieldName string) []byte {
+	fieldName = strings.TrimSpace(fieldName)
+	if fieldName == "" {
+		return nil
+	}
+	encoded := strings.TrimSpace(stringFromAny(values[fieldName]))
+	if encoded == "" {
+		return nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		slog.Warn("failed to decode product image", "field", fieldName, "error", err)
+		return nil
+	}
+	return decoded
 }
 
 func extractPayload(data any) any {

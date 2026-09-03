@@ -48,6 +48,7 @@ type Item struct {
 	Width        float64
 	Length       float64
 	QtyAvailable float64
+	Image        []byte
 }
 
 type PickItem struct {
@@ -59,6 +60,7 @@ type PickItem struct {
 	Width        float64
 	Length       float64
 	QtyAvailable float64
+	Image        []byte
 	Shipments    []PickShipment
 }
 

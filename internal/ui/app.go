@@ -315,6 +315,9 @@ func (a *App) aggregatePickList() []domain.PickItem {
 				if shouldAdoptQtyAvailable(existing.QtyAvailable, item.QtyAvailable) {
 					existing.QtyAvailable = item.QtyAvailable
 				}
+				if len(existing.Image) == 0 {
+					existing.Image = item.Image
+				}
 				continue
 			}
 
@@ -357,6 +360,9 @@ func (a *App) aggregatePickList() []domain.PickItem {
 				if shouldAdoptQtyAvailable(existing.QtyAvailable, item.QtyAvailable) {
 					existing.QtyAvailable = item.QtyAvailable
 				}
+				if len(existing.Image) == 0 {
+					existing.Image = item.Image
+				}
 				existing.Shipments = append(existing.Shipments, pickShipment)
 				continue
 			}
@@ -370,6 +376,7 @@ func (a *App) aggregatePickList() []domain.PickItem {
 				Width:        item.Width,
 				Length:       item.Length,
 				QtyAvailable: item.QtyAvailable,
+				Image:        item.Image,
 				Shipments:    []domain.PickShipment{pickShipment},
 			}
 		}

@@ -14,7 +14,8 @@ func TestSelectImageField(t *testing.T) {
 		want   string
 	}{
 		{"prefers smallest thumbnail", map[string]any{"image_1920": binary, "image_128": binary, "image_256": binary}, "image_256"},
-		{"falls back to available size", map[string]any{"image_1920": binary}, "image_1920"},
+		{"falls back to next small size", map[string]any{"image_1920": binary, "image_512": binary}, "image_512"},
+		{"never uses full resolution", map[string]any{"image_1920": binary}, ""},
 		{"ignores non binary fields", map[string]any{"image_256": map[string]any{"type": "char"}}, ""},
 		{"no image fields", map[string]any{"name": map[string]any{"type": "char"}}, ""},
 	}

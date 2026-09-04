@@ -742,15 +742,22 @@ func (c *Client) detectProductFieldSelection(forceRefresh bool) (productFieldSel
 	}
 	selection.heightField = selectNumericField(fields, []string{"height", "product_height", "x_studio_height"}, []string{"height"}, used)
 	selection.imageField = selectImageField(fields)
+	if selection.imageField == "" {
+		slog.Warn("no small product image field found; pick item photos will be hidden")
+	} else {
+		slog.Info("selected product image field", "field", selection.imageField)
+	}
 
 	return selection, nil
 }
 
 // selectImageField picks the smallest standard Odoo product thumbnail available.
-// Returns "" when the database exposes no binary image field, so item loading
-// keeps working against customized Odoo instances.
+// Full-resolution image_1920 is deliberately excluded: a batch's worth of
+// originals would decode to tens of megabytes and exhaust the Pi. Returns ""
+// when the database exposes no small binary image field, so item loading keeps
+// working (without photos) against customized Odoo instances.
 func selectImageField(fields map[string]any) string {
-	for _, name := range []string{"image_256", "image_128", "image_512", "image_1920"} {
+	for _, name := range []string{"image_256", "image_128", "image_512"} {
 		meta, ok := fields[name].(map[string]any)
 		if !ok {
 			continue

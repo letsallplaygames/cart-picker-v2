@@ -22,6 +22,12 @@ const (
 	cacheDirName  = "data"
 	cacheFileName = "api_cache.db"
 	logFileName   = "app.log"
+
+	// Expired responses are purged at startup so cached product images cannot
+	// grow the cache file without bound. The window stays well past the 24h API
+	// and 4h inventory TTLs because the stale inventory reads are the offline
+	// fallback when Odoo is unreachable. Must never be 0, which wipes the cache.
+	cacheRetentionHours = 24 * 7
 )
 
 func main() {
@@ -84,6 +90,10 @@ func main() {
 			slog.Warn("failed to close cache", "error", err)
 		}
 	}()
+
+	if err := apiCache.Clear(cacheRetentionHours); err != nil {
+		slog.Warn("failed to purge expired cache entries", "error", err, "retention_hours", cacheRetentionHours)
+	}
 
 	client := odoo.New(odoo.Config{
 		APIKey:   cfg.OdooAPIKey,

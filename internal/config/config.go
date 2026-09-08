@@ -44,6 +44,19 @@ var cartProfiles = map[string]domain.CartProfile{
 			{Cols: 8},
 		},
 	},
+	"medium_cart": {
+		Name:         "medium_cart",
+		DisplayName:  "Medium Cart",
+		MaxBatchSize: 72,
+		RowConfigs: []domain.RowConfig{
+			{Cols: 14},
+			{Cols: 14},
+			{Cols: 14},
+			{Cols: 14},
+			{Cols: 8},
+			{Cols: 8},
+		},
+	},
 	"small_cart": {
 		Name:         "small_cart",
 		DisplayName:  "Small Cart",

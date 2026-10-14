@@ -44,72 +44,100 @@ func main() {
 	defer logFile.Close()
 	slog.SetDefault(logger)
 
-	cfg, err := config.Load(*cartNumber, *profileName)
-	if err != nil {
-		slog.Error("failed to load app config", "error", err)
-		os.Exit(1)
-	}
-
-	profile, err := config.GetCartProfile(cfg.ProfileName)
-	if err != nil {
-		slog.Error("failed to resolve cart profile", "error", err)
-		os.Exit(1)
-	}
-
-	hardwareResult := hardware.Check()
-	if hardwareResult.Passed {
-		slog.Info("hardware check passed", "system", hardwareResult.System, "arch", hardwareResult.Arch, "gpio", hardwareResult.GPIODevice, "library", hardwareResult.WS281xLibraryPath)
-	} else {
-		slog.Warn("hardware check failed; running in simulation mode", "system", hardwareResult.System, "arch", hardwareResult.Arch)
-		for _, message := range hardwareResult.Messages {
-			slog.Warn(message)
+	cartFlagSet := false
+	profileFlagSet := false
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "cart":
+			cartFlagSet = true
+		case "profile":
+			profileFlagSet = true
 		}
-	}
+	})
 
-	if strings.TrimSpace(cfg.OdooAPIKey) == "" || strings.TrimSpace(cfg.OdooBaseURL) == "" {
-		slog.Error("missing required Odoo configuration", "required", []string{"ODOO_API_KEY", "ODOO_BASE_URL"})
-		os.Exit(1)
-	}
-
-	cachePath := filepath.Join(cacheDirName, cacheFileName)
-	if *clearCache {
-		if err := clearCacheFile(cachePath); err != nil {
-			slog.Error("failed to clear cache", "error", err, "path", cachePath)
-			os.Exit(1)
+	var apiCache *cache.Cache
+	var ledController *led.Controller
+	ui.RunLauncher(ui.LaunchSettings{
+		CartNumber:      *cartNumber,
+		ProfileName:     *profileName,
+		CartFromFlag:    cartFlagSet,
+		ProfileFromFlag: profileFlagSet,
+	}, func(settings ui.LaunchSettings) (*ui.App, error) {
+		if ledController != nil {
+			ledController.Cleanup()
+			ledController = nil
 		}
-		slog.Info("cache cleared", "path", cachePath)
-	}
+		if apiCache != nil {
+			if err := apiCache.Close(); err != nil {
+				slog.Warn("failed to close cache", "error", err)
+			}
+			apiCache = nil
+		}
 
-	apiCache, err := cache.New(cachePath)
-	if err != nil {
-		slog.Error("failed to create cache", "error", err, "path", cachePath)
-		os.Exit(1)
+		cfg, err := config.Load(settings.CartNumber, settings.ProfileName)
+		if err != nil {
+			return nil, fmt.Errorf("load app config: %w", err)
+		}
+
+		profile, err := config.GetCartProfile(cfg.ProfileName)
+		if err != nil {
+			return nil, fmt.Errorf("resolve cart profile: %w", err)
+		}
+
+		hardwareResult := hardware.Check()
+		if hardwareResult.Passed {
+			slog.Info("hardware check passed", "system", hardwareResult.System, "arch", hardwareResult.Arch, "gpio", hardwareResult.GPIODevice, "library", hardwareResult.WS281xLibraryPath)
+		} else {
+			slog.Warn("hardware check failed; running in simulation mode", "system", hardwareResult.System, "arch", hardwareResult.Arch)
+			for _, message := range hardwareResult.Messages {
+				slog.Warn(message)
+			}
+		}
+
+		if strings.TrimSpace(cfg.OdooAPIKey) == "" || strings.TrimSpace(cfg.OdooBaseURL) == "" {
+			return nil, fmt.Errorf("missing required Odoo configuration: ODOO_API_KEY and ODOO_BASE_URL")
+		}
+
+		cachePath := filepath.Join(cacheDirName, cacheFileName)
+		if *clearCache {
+			if err := clearCacheFile(cachePath); err != nil {
+				return nil, fmt.Errorf("clear cache: %w", err)
+			}
+			slog.Info("cache cleared", "path", cachePath)
+		}
+
+		apiCache, err = cache.New(cachePath)
+		if err != nil {
+			return nil, fmt.Errorf("create cache: %w", err)
+		}
+
+		if err := apiCache.Clear(cacheRetentionHours); err != nil {
+			slog.Warn("failed to purge expired cache entries", "error", err, "retention_hours", cacheRetentionHours)
+		}
+
+		client := odoo.New(odoo.Config{
+			APIKey:   cfg.OdooAPIKey,
+			BaseURL:  cfg.OdooBaseURL,
+			Database: cfg.OdooDB,
+			Cache:    apiCache,
+			UseCache: true,
+		})
+		provider := odoo.NewProvider(client)
+		pick := picker.New(provider)
+		ledController = led.New(cfg.CartNumber, profile.Name)
+
+		slog.Info("starting pickcart", "cart", cfg.CartNumber, "profile", profile.Name)
+		return ui.NewApp(cfg, profile, pick, ledController), nil
+	})
+
+	if ledController != nil {
+		ledController.Cleanup()
 	}
-	defer func() {
+	if apiCache != nil {
 		if err := apiCache.Close(); err != nil {
 			slog.Warn("failed to close cache", "error", err)
 		}
-	}()
-
-	if err := apiCache.Clear(cacheRetentionHours); err != nil {
-		slog.Warn("failed to purge expired cache entries", "error", err, "retention_hours", cacheRetentionHours)
 	}
-
-	client := odoo.New(odoo.Config{
-		APIKey:   cfg.OdooAPIKey,
-		BaseURL:  cfg.OdooBaseURL,
-		Database: cfg.OdooDB,
-		Cache:    apiCache,
-		UseCache: true,
-	})
-	provider := odoo.NewProvider(client)
-	pick := picker.New(provider)
-	ledController := led.New(cfg.CartNumber, profile.Name)
-	defer ledController.Cleanup()
-
-	application := ui.NewApp(cfg, profile, pick, ledController)
-	slog.Info("starting pickcart", "cart", cfg.CartNumber, "profile", profile.Name)
-	application.Run()
 }
 
 func setupLogging(logPath string) (*slog.Logger, *os.File, error) {

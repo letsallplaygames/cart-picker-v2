@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"fyne.io/fyne/v2"
-	fyneapp "fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 
@@ -51,12 +50,7 @@ type App struct {
 }
 
 func NewApp(cfg *config.AppConfig, profile domain.CartProfile, p *picker.Picker, ledController *led.Controller) *App {
-	fa := fyneapp.New()
-	w := fa.NewWindow("PickCart")
-
-	a := &App{
-		fyneApp:                 fa,
-		window:                  w,
+	return &App{
 		cfg:                     cfg,
 		profile:                 profile,
 		picker:                  p,
@@ -67,19 +61,26 @@ func NewApp(cfg *config.AppConfig, profile domain.CartProfile, p *picker.Picker,
 		currentFindOrderDetails: map[string]FindOrderDetail{},
 		productDims:             map[string]dimensions.Dimensions{},
 	}
+}
 
+func (a *App) attach(fa fyne.App, w fyne.Window) {
+	if a == nil || fa == nil || w == nil {
+		return
+	}
+
+	a.fyneApp = fa
+	a.window = w
 	a.tabs = a.buildTabs()
 	a.currentTabName = "Shipments"
+	a.window.SetTitle("PickCart")
 	a.window.SetContent(container.NewBorder(nil, a.statusLabel, nil, nil, a.tabs))
 	a.window.Canvas().SetOnTypedRune(a.onTypedRune)
 	a.window.Canvas().SetOnTypedKey(a.onTypedKey)
 	a.window.Resize(fyne.NewSize(1400, 900))
-
-	return a
 }
 
-func (a *App) Run() {
-	if a == nil {
+func (a *App) startLoading() {
+	if a == nil || a.picker == nil || a.statusLabel == nil {
 		return
 	}
 
@@ -98,8 +99,6 @@ func (a *App) Run() {
 			a.statusLabel.SetText(fmt.Sprintf("Loaded %d batches", count))
 		})
 	})
-
-	a.window.ShowAndRun()
 }
 
 func (a *App) buildTabs() *container.AppTabs {

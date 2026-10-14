@@ -158,14 +158,19 @@ func profileSelectOptions() ([]string, map[string]string) {
 		if err != nil {
 			continue
 		}
-		display := profile.DisplayName
-		if display == "" {
-			display = profile.Name
-		}
+		display := profileOptionLabel(profile.Name, profile.DisplayName, config.CartCapacity(profile))
 		displayNames = append(displayNames, display)
 		displayByName[profile.Name] = display
 	}
 	return displayNames, displayByName
+}
+
+func profileOptionLabel(name, displayName string, bins int) string {
+	label := strings.TrimSpace(displayName)
+	if label == "" {
+		label = name
+	}
+	return fmt.Sprintf("%s: %d", label, bins)
 }
 
 func profileNameFromDisplay(display string) (string, error) {
@@ -178,7 +183,8 @@ func profileNameFromDisplay(display string) (string, error) {
 		if err != nil {
 			continue
 		}
-		if profile.DisplayName == display || profile.Name == display {
+		label := profileOptionLabel(profile.Name, profile.DisplayName, config.CartCapacity(profile))
+		if label == display || profile.DisplayName == display || profile.Name == display {
 			return profile.Name, nil
 		}
 	}

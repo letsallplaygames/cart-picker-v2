@@ -48,6 +48,7 @@ func TestProfileNameFromDisplay(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
+		{name: "label with bins", input: "Small Cart: 126", want: "small_cart"},
 		{name: "display name", input: "Small Cart", want: "small_cart"},
 		{name: "internal name", input: "medium_cart", want: "medium_cart"},
 		{name: "empty", input: " ", wantErr: true},
@@ -71,6 +72,15 @@ func TestProfileNameFromDisplay(t *testing.T) {
 				t.Fatalf("profileNameFromDisplay(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestProfileOptionLabel(t *testing.T) {
+	t.Parallel()
+
+	got := profileOptionLabel("standard", "Standard Cart", 100)
+	if got != "Standard Cart: 100" {
+		t.Fatalf("profileOptionLabel(...) = %q, want %q", got, "Standard Cart: 100")
 	}
 }
 
